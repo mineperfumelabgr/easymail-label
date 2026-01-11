@@ -1,4 +1,3 @@
-
 import { useMemo, useState, useCallback } from "react";
 import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 import { authenticate } from "../shopify.server";
@@ -59,7 +58,8 @@ async function adminGraphql(admin, query, variables) {
 function pickMessage(j) {
   if (!j) return "";
   if (typeof j.Message === "string" && j.Message.trim()) return j.Message.trim();
-  if (Array.isArray(j.Messages) && j.Messages.length) return j.Messages.filter(Boolean).join(" | ");
+  if (Array.isArray(j.Messages) && j.Messages.length)
+    return j.Messages.filter(Boolean).join(" | ");
   return "";
 }
 
@@ -115,7 +115,8 @@ async function callCancelEasyMail(number) {
 
   return {
     ok: false,
-    message: "EasyMail CancelVoucher did not return a valid JSON response (or unknown payload format).",
+    message:
+      "EasyMail CancelVoucher did not return a valid JSON response (or unknown payload format).",
     preview: lastPreview,
   };
 }
@@ -207,7 +208,6 @@ export const loader = async ({ request }) => {
   }
 
   const deduped = uniqRows(rows);
-
   deduped.sort((a, b) => (b.createdAtIso || "").localeCompare(a.createdAtIso || ""));
   return { date, rows: deduped };
 };
@@ -237,7 +237,11 @@ export const action = async ({ request }) => {
 
   if (!out.ok) {
     const extra = out.preview ? ` Preview: ${out.preview}` : "";
-    return { ok: false, message: `Cancel failed for ${voucherNumberRaw}: ${out.message}${extra}`, date };
+    return {
+      ok: false,
+      message: `Cancel failed for ${voucherNumberRaw}: ${out.message}${extra}`,
+      date,
+    };
   }
 
   if (!out.result) {
@@ -248,7 +252,6 @@ export const action = async ({ request }) => {
 };
 
 export default function VouchersPage() {
-
   const { date, rows } = useLoaderData();
   const actionData = useActionData();
   const nav = useNavigation();
@@ -260,29 +263,33 @@ export default function VouchersPage() {
     return `/app/vouchers?date=${encodeURIComponent(selectedDate)}`;
   }, [selectedDate]);
 
+  const openLabel = useCallback(
+    async (voucherNumber) => {
+      if (!voucherNumber) throw new Error("Missing voucher number.");
 
-const openLabel = useCallback(
-  async (voucherNumber) => {
-    if (!voucherNumber) throw new Error("Missing voucher number.");
+      // ✅ Apriamo la label dentro l'app (stessa tab iframe) -> niente login
+      const url =
+        `/app/easymail-label-view?number=${encodeURIComponent(voucherNumber)}` +
+        `&inline=1&back=${encodeURIComponent(`/app/vouchers?date=${selectedDate}`)}`;
 
-    // ✅ Apriamo la label dentro l'app (stessa tab iframe) -> niente login
-    const url =
-      `/app/easymail-label-view?number=${encodeURIComponent(voucherNumber)}` +
-      `&inline=1&back=${encodeURIComponent(`/app/vouchers?date=${selectedDate}`)}`;
-
-    window.location.assign(url);
-  },
-  [selectedDate]
-);
-
-
+      window.location.assign(url);
+    },
+    [selectedDate]
+  );
 
   const printThisPage = useCallback(() => {
     window.print();
   }, []);
 
   return (
-    <div style={{ maxWidth: 980, margin: "24px auto", padding: 16, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif" }}>
+    <div
+      style={{
+        maxWidth: 980,
+        margin: "24px auto",
+        padding: 16,
+        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
+      }}
+    >
       <h1 style={{ fontSize: 20, marginBottom: 6 }}>Daily labels</h1>
       <p style={{ marginTop: 0, color: "#666" }}>
         Labels created on a specific day (based on Shopify metafields).
@@ -309,9 +316,19 @@ const openLabel = useCallback(
       )}
 
       {/* Controls */}
-      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 14 }}>
+      <div
+        style={{
+          display: "flex",
+          gap: 12,
+          alignItems: "center",
+          flexWrap: "wrap",
+          marginBottom: 14,
+        }}
+      >
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <label htmlFor="dateInput" style={{ fontSize: 13, color: "#333" }}>Date:</label>
+          <label htmlFor="dateInput" style={{ fontSize: 13, color: "#333" }}>
+            Date:
+          </label>
           <input
             id="dateInput"
             type="date"
@@ -321,7 +338,8 @@ const openLabel = useCallback(
           />
         </div>
 
-        <s-link
+        {/* ✅ NO s-link: usiamo anchor normale */}
+        <a
           href={refreshHref}
           style={{
             display: "inline-block",
@@ -334,7 +352,7 @@ const openLabel = useCallback(
           }}
         >
           Refresh
-        </s-link>
+        </a>
 
         <button
           type="button"
@@ -353,7 +371,15 @@ const openLabel = useCallback(
       </div>
 
       {/* Cancel form */}
-      <div style={{ marginBottom: 16, border: "1px solid #eee", borderRadius: 14, padding: 12, background: "#fff" }}>
+      <div
+        style={{
+          marginBottom: 16,
+          border: "1px solid #eee",
+          borderRadius: 14,
+          padding: 12,
+          background: "#fff",
+        }}
+      >
         <Form method="post" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <input type="hidden" name="intent" value="cancel" />
           <input type="hidden" name="date" value={selectedDate} />
@@ -409,16 +435,18 @@ const openLabel = useCallback(
           <tbody>
             {rows.map((r) => (
               <tr key={`${r.orderId}::${r.voucherNumber}`} style={{ borderTop: "1px solid #f0f0f0" }}>
-                <td style={{ padding: "10px 12px", fontSize: 13 }}>
-                  {r.orderName}
-                </td>
-                <td style={{ padding: "10px 12px", fontSize: 13, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
+                <td style={{ padding: "10px 12px", fontSize: 13 }}>{r.orderName}</td>
+                <td
+                  style={{
+                    padding: "10px 12px",
+                    fontSize: 13,
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                  }}
+                >
                   {r.voucherNumber}
                 </td>
                 <td style={{ padding: "10px 12px", fontSize: 13 }}>{r.pieces || "1"}</td>
-                <td style={{ padding: "10px 12px", fontSize: 12, color: "#666" }}>
-                  {r.createdAtIso || ""}
-                </td>
+                <td style={{ padding: "10px 12px", fontSize: 12, color: "#666" }}>{r.createdAtIso || ""}</td>
                 <td style={{ padding: "10px 12px" }}>
                   <button
                     type="button"
