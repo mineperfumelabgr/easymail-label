@@ -1,9 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useActionData, useNavigation, Form, useSearchParams } from "@remix-run/react";
-
-// Login page used when the app is opened outside the embedded context
-// or when Shopify can't infer the shop automatically.
-// We keep this very simple and user-proof.
+import { Form, useActionData, useNavigation, useSearchParams } from "react-router";
 
 export default function Login() {
   const actionData = useActionData();
@@ -12,10 +8,8 @@ export default function Login() {
 
   const isSubmitting = navigation.state === "submitting";
 
-  // If Shopify passes shop as a query param, prefill it.
   const initialShop = useMemo(() => {
-    const s = (searchParams.get("shop") || "").trim();
-    return s;
+    return (searchParams.get("shop") || "").trim();
   }, [searchParams]);
 
   const [shop, setShop] = useState(initialShop);
@@ -28,8 +22,8 @@ export default function Login() {
 
   const normalizeShop = (value) => {
     let s = String(value || "").trim();
-    s = s.replace(/^https?:\/\//i, ""); // remove protocol if pasted
-    s = s.replace(/\/.*$/g, "");        // remove any path
+    s = s.replace(/^https?:\/\//i, ""); // if user pastes https://...
+    s = s.replace(/\/.*$/g, ""); // remove any path
     return s;
   };
 
@@ -43,7 +37,15 @@ export default function Login() {
   };
 
   return (
-    <div style={{ maxWidth: 520, margin: "40px auto", padding: 16, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif" }}>
+    <div
+      style={{
+        maxWidth: 520,
+        margin: "40px auto",
+        padding: 16,
+        fontFamily:
+          "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
+      }}
+    >
       <h1 style={{ fontSize: 24, marginBottom: 6 }}>EasyMail Label</h1>
       <p style={{ marginTop: 0, color: "#555" }}>
         Enter your shop domain to continue.
@@ -57,7 +59,10 @@ export default function Login() {
           if (err) e.preventDefault();
         }}
       >
-        <label htmlFor="shop" style={{ display: "block", fontWeight: 600, marginBottom: 8 }}>
+        <label
+          htmlFor="shop"
+          style={{ display: "block", fontWeight: 600, marginBottom: 8 }}
+        >
           Shop domain
         </label>
 
