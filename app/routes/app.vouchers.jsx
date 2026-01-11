@@ -263,19 +263,20 @@ export default function VouchersPage() {
     return `/app/vouchers?date=${encodeURIComponent(selectedDate)}`;
   }, [selectedDate]);
 
-  const openLabel = useCallback(
-    async (voucherNumber) => {
-      if (!voucherNumber) throw new Error("Missing voucher number.");
+const openLabel = useCallback(
+  async (voucherNumber) => {
+    if (!voucherNumber) throw new Error("Missing voucher number.");
 
-      // ✅ Apriamo la label dentro l'app (stessa tab iframe) -> niente login
-      const url =
-        `/app/easymail-label-view?number=${encodeURIComponent(voucherNumber)}` +
-        `&inline=1&back=${encodeURIComponent(`/app/vouchers?date=${selectedDate}`)}`;
+    // ✅ route /app => embedded => no login loop
+    const url =
+      `/app/label-pdf?number=${encodeURIComponent(voucherNumber)}` +
+      `&inline=1&filename=${encodeURIComponent(`Easymail_Label_${selectedDate}_${voucherNumber}.pdf`)}`;
 
-      window.location.assign(url);
-    },
-    [selectedDate]
-  );
+    // nuova tab (così non perdi la lista)
+    window.open(url, "_blank", "noopener,noreferrer");
+  },
+  [selectedDate]
+);
 
   const printThisPage = useCallback(() => {
     window.print();
