@@ -179,7 +179,9 @@ export const loader = async ({ request }) => {
     let apiJson = null;
     try {
       apiJson = JSON.parse(raw);
-    } catch {}
+    } catch {
+  // ignore
+}
 
     if (!apiResp.ok) {
       return cors(

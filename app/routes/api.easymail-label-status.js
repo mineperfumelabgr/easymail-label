@@ -1,3 +1,4 @@
+
 import { authenticate } from "../shopify.server";
 
 const NS = "easymail";
@@ -108,7 +109,9 @@ export async function loader({ request }) {
       try {
         const parsed = JSON.parse(currentNumbersRaw);
         if (Array.isArray(parsed)) numbers = parsed.map(String);
-      } catch {}
+} catch {
+  // ignore
+}
     }
     if (!numbers.length && voucherNumber) numbers = [voucherNumber];
 

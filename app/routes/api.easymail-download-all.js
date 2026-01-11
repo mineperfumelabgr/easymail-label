@@ -98,7 +98,12 @@ export async function loader({ request }) {
       try {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) numbers = parsed.map(String);
-      } catch {}
+        // ignore
+}
+catch {
+  // ignore
+}
+
     }
     if (!numbers.length && master) numbers = [master];
 

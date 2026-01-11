@@ -284,8 +284,12 @@ export async function loader({ request }) {
         try {
           const parsed = JSON.parse(existingCurrentNumbersRaw);
           if (Array.isArray(parsed)) nums = parsed.map(String);
-        } catch {}
+          // ignore
+}
+catch {
+  // ignore
       }
+ }
       if (!nums.length) nums = [String(existingVoucher)];
 
       const labels = uniq(nums).map((n) => ({ number: n, url: makeLabelUrl(n) }));
@@ -378,7 +382,10 @@ let esmJson;
       try {
         const parsed = JSON.parse(historyRaw);
         if (Array.isArray(parsed)) history = parsed;
-      } catch {}
+    }   catch {
+  // ignore
+}
+
     }
 
     if (existingVoucher && existingVoucher !== String(masterShipmentNumber)) {

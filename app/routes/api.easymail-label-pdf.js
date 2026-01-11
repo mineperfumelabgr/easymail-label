@@ -7,7 +7,7 @@ const ESM_GET_VOUCHER_PDF_A6 =
 
 function safeFilename(name) {
   return String(name || "easymail-label.pdf")
-    .replace(/[^\w.\-]+/g, "_")
+    .replace(/[^\w.-]+/g, "_")
     .replace(/_+/g, "_")
     .slice(0, 180);
 }

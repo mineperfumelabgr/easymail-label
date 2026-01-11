@@ -175,6 +175,11 @@ function Extension() {
         <s-box paddingBlockStart="small">
           <s-banner tone="warning">
             <s-text>{message}</s-text>
+{voucherNumber ? (
+  <s-box paddingBlockStart="xsmall">
+    <s-text>Voucher: {voucherNumber}</s-text>
+  </s-box>
+) : null}
 
             <s-box paddingBlockStart="small">
               <s-inline-stack gap="base">
@@ -215,6 +220,12 @@ function Extension() {
         <s-box paddingBlockStart="small">
           <s-banner tone="success">
             <s-text>{message}</s-text>
+
+{voucherNumber ? (
+  <s-box paddingBlockStart="xsmall">
+    <s-text>Voucher: {voucherNumber}</s-text>
+  </s-box>
+) : null}
 
             <s-box paddingBlockStart="small">
               {labels.length > 1 ? (

@@ -1,4 +1,4 @@
-import React from "react";
+// no React import needed
 
 export default function AppHome() {
   return (

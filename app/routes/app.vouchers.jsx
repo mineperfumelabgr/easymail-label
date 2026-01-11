@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 import { authenticate } from "../shopify.server";
 
@@ -168,7 +168,10 @@ export const action = async ({ request }) => {
   let json = null;
   try {
     json = JSON.parse(text);
-  } catch {}
+  } catch {
+  // ignore malformed JSON
+}
+
 
   const success = json?.success === true || json?.Result === true || resp.ok;
 
@@ -230,13 +233,14 @@ export default function VouchersPage() {
       {/* Controls */}
       <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 14 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <label style={{ fontSize: 13, color: "#333" }}>Date:</label>
-          <input
-            type="date"
-            value={selectedDate}
-            onChange={(e) => setSelectedDate(e.target.value)}
-            style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid #ddd" }}
-          />
+<label htmlFor="dateInput" style={{ fontSize: 13, color: "#333" }}>Date:</label>
+<input
+  id="dateInput"
+  type="date"
+  value={selectedDate}
+  onChange={(e) => setSelectedDate(e.target.value)}
+  style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid #ddd" }}
+/>
         </div>
 
         <s-link
@@ -257,7 +261,7 @@ export default function VouchersPage() {
         <s-link
           href={printableHref}
           target="_blank"
-          rel="noopener"
+          rel="noopener noreferrer"
           style={{
             display: "inline-block",
             padding: "10px 14px",
@@ -311,7 +315,7 @@ export default function VouchersPage() {
                       <a
                         href={r.viewUrl}
                         target="_blank"
-                        rel="noopener"
+                        rel="noopener noreferrer"
                         style={{
                           display: "inline-block",
                           padding: "8px 10px",

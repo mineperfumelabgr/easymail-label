@@ -185,7 +185,10 @@ export const loader = async ({ request }) => {
 
     const raw = await apiResp.text();
     let apiJson = null;
-    try { apiJson = JSON.parse(raw); } catch {}
+    try { apiJson = JSON.parse(raw); } catch {
+  // ignore
+}
+
 
     if (!apiResp.ok) {
       throw new Error(`EasyMail HTTP ${apiResp.status}: ${raw.slice(0, 500)}`);
