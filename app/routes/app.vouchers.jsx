@@ -4,6 +4,8 @@ import { authenticate } from "../shopify.server";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { Redirect } from "@shopify/app-bridge/actions";
 
+const TZ = "Europe/Athens";
+
 const NS = "easymail";
 const KEY_VOUCHER = "voucher_number";
 const KEY_CREATED_AT = "created_at";
@@ -14,15 +16,23 @@ const KEY_HISTORY = "voucher_history";
 const ESM_CANCEL_VOUCHER =
   "https://webservices.easy-mail.gr/WcfServiceJSON2/Service1.svc/CancelVoucher";
 
-function ymd(d) {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
 function safeStr(v) {
   return String(v ?? "");
 }
+
+// YYYY-MM-DD in a specific timezone (important: Render server is usually UTC)
+function ymdTz(date, timeZone = TZ) {
+  const dt = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(dt.getTime())) return "";
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return fmt.format(dt); // en-CA => YYYY-MM-DD
+}
+
 function parseHistory(raw) {
   if (!raw) return [];
   try {
@@ -32,12 +42,14 @@ function parseHistory(raw) {
     return [];
   }
 }
-function isWithinDay(iso, dateStr) {
+
+function isWithinDayTz(iso, dateStr, timeZone = TZ) {
   if (!iso) return false;
   const dt = new Date(iso);
   if (Number.isNaN(dt.getTime())) return false;
-  return ymd(dt) === dateStr;
+  return ymdTz(dt, timeZone) === dateStr;
 }
+
 function uniqRows(rows) {
   // dedup per orderId + voucherNumber
   const map = new Map();
@@ -51,15 +63,18 @@ function uniqRows(rows) {
 async function adminGraphql(admin, query, variables) {
   const r = await admin.graphql(query, { variables });
   const j = await r.json();
-  if (j?.errors?.length) throw new Error(j.errors.map((e) => e.message).join(" | "));
+  if (j?.errors?.length) {
+    throw new Error(j.errors.map((e) => e.message).join(" | "));
+  }
   return j;
 }
 
 function pickMessage(j) {
   if (!j) return "";
   if (typeof j.Message === "string" && j.Message.trim()) return j.Message.trim();
-  if (Array.isArray(j.Messages) && j.Messages.length)
+  if (Array.isArray(j.Messages) && j.Messages.length) {
     return j.Messages.filter(Boolean).join(" | ");
+  }
   return "";
 }
 
@@ -115,8 +130,7 @@ async function callCancelEasyMail(number) {
 
   return {
     ok: false,
-    message:
-      "EasyMail CancelVoucher did not return a valid JSON response (or unknown payload format).",
+    message: "EasyMail CancelVoucher did not return a valid JSON response (or unknown payload format).",
     preview: lastPreview,
   };
 }
@@ -128,14 +142,15 @@ function orderNumericId(orderGid) {
   return m ? m[1] : "";
 }
 
-
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
 
   const url = new URL(request.url);
-  const date = url.searchParams.get("date") || ymd(new Date());
 
-  // preserviamo shop/host (embedded) se presenti
+  // IMPORTANT: default date must be Europe/Athens, not server timezone
+  const date = url.searchParams.get("date") || ymdTz(new Date(), TZ);
+
+  // keep embedded params if present (helps avoid first-time auth weirdness)
   const shop = url.searchParams.get("shop") || "";
   const host = url.searchParams.get("host") || "";
 
@@ -174,11 +189,11 @@ export const loader = async ({ request }) => {
       cursor = e.cursor;
       const o = e.node;
 
-      // stop early: once orders updatedAt are older than the requested date
+      // stop early (sorted by updatedAt desc) — compare in Athens TZ
       const updatedAt = new Date(o.updatedAt);
       if (!Number.isNaN(updatedAt.getTime())) {
-        const updatedYmd = ymd(updatedAt);
-        if (updatedYmd < date) {
+        const updatedYmdAth = ymdTz(updatedAt, TZ);
+        if (updatedYmdAth && updatedYmdAth < date) {
           hasNext = false;
           break;
         }
@@ -190,7 +205,7 @@ export const loader = async ({ request }) => {
       const history = parseHistory(safeStr(o?.mfHistory?.value));
 
       // current
-      if (currentVoucher && isWithinDay(currentCreated, date)) {
+      if (currentVoucher && isWithinDayTz(currentCreated, date, TZ)) {
         rows.push({
           orderName: safeStr(o.name),
           orderId: safeStr(o.id),
@@ -206,7 +221,7 @@ export const loader = async ({ request }) => {
         const ca = safeStr(h?.createdAtIso);
         const pcs = safeStr(h?.pieces) || "1";
         if (!vn) continue;
-        if (!isWithinDay(ca, date)) continue;
+        if (!isWithinDayTz(ca, date, TZ)) continue;
 
         rows.push({
           orderName: safeStr(o.name),
@@ -221,6 +236,7 @@ export const loader = async ({ request }) => {
 
   const deduped = uniqRows(rows);
   deduped.sort((a, b) => (b.createdAtIso || "").localeCompare(a.createdAtIso || ""));
+
   return { date, rows: deduped, shop, host };
 };
 
@@ -230,9 +246,11 @@ export const action = async ({ request }) => {
   const form = await request.formData();
   const intent = safeStr(form.get("intent"));
   const voucherNumberRaw = safeStr(form.get("voucherNumber")).trim();
-  const date = safeStr(form.get("date")) || ymd(new Date());
+  const date = safeStr(form.get("date")) || ymdTz(new Date(), TZ);
 
-  if (intent !== "cancel") return { ok: false, message: "Unknown action.", date };
+  if (intent !== "cancel") {
+    return { ok: false, message: "Unknown action.", date };
+  }
 
   if (!voucherNumberRaw) {
     return { ok: false, message: "Please enter a voucher number.", date };
@@ -258,7 +276,8 @@ export const action = async ({ request }) => {
 };
 
 export default function VouchersPage() {
-const app = useAppBridge();
+  const app = useAppBridge();
+
   const { date, rows, shop, host } = useLoaderData();
   const actionData = useActionData();
   const nav = useNavigation();
@@ -266,22 +285,13 @@ const app = useAppBridge();
   const [selectedDate, setSelectedDate] = useState(actionData?.date || date);
   const isSubmitting = nav.state === "submitting";
 
-  const embedQS = useMemo(() => {
-    const p = new URLSearchParams();
-    if (shop) p.set("shop", shop);
-    if (host) p.set("host", host);
-    p.set("embedded", "1");
-    return p.toString();
-  }, [shop, host]);
-
-  const withEmbed = useCallback(
-    (path) => (path.includes("?") ? `${path}&${embedQS}` : `${path}?${embedQS}`),
-    [embedQS]
-  );
-
   const refreshHref = useMemo(() => {
-    return withEmbed(`/app/vouchers?date=${encodeURIComponent(selectedDate)}`);
-  }, [withEmbed, selectedDate]);
+    const params = new URLSearchParams();
+    params.set("date", selectedDate);
+    if (shop) params.set("shop", shop);
+    if (host) params.set("host", host);
+    return `/app/vouchers?${params.toString()}`;
+  }, [selectedDate, shop, host]);
 
   const openOrder = useCallback(
     (orderGid) => {
@@ -291,12 +301,13 @@ const app = useAppBridge();
         return;
       }
 
-      const redirect = Redirect.create(app);
-
-      // ✅ apre l’admin direttamente, senza store handle
-      redirect.dispatch(Redirect.Action.ADMIN_PATH, {
-        path: `/orders/${numeric}`,
-      });
+      try {
+        const redirect = Redirect.create(app);
+        redirect.dispatch(Redirect.Action.ADMIN_PATH, { path: `/orders/${numeric}` });
+      } catch (e) {
+        // fallback (should rarely happen)
+        alert(e?.message || "Cannot open order.");
+      }
     },
     [app]
   );
@@ -305,13 +316,28 @@ const app = useAppBridge();
     window.print();
   }, []);
 
+  function formatCreated(iso) {
+    if (!iso) return "";
+    const dt = new Date(iso);
+    if (Number.isNaN(dt.getTime())) return iso;
+    return dt.toLocaleString("el-GR", { timeZone: TZ });
+  }
+
   return (
-    <div style={{ maxWidth: 980, margin: "24px auto", padding: 16, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif" }}>
+    <div
+      style={{
+        maxWidth: 980,
+        margin: "24px auto",
+        padding: 16,
+        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
+      }}
+    >
       <h1 style={{ fontSize: 20, marginBottom: 6 }}>Daily labels</h1>
       <p style={{ marginTop: 0, color: "#666" }}>
-        Labels created on a specific day (based on Shopify metafields).
+        Labels created on a specific day (based on Shopify metafields). Timezone: <b>{TZ}</b>
       </p>
 
+      {/* Banner */}
       {actionData?.message && (
         <div
           style={{
@@ -331,9 +357,12 @@ const app = useAppBridge();
         </div>
       )}
 
+      {/* Controls */}
       <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 14 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <label htmlFor="dateInput" style={{ fontSize: 13, color: "#333" }}>Date:</label>
+          <label htmlFor="dateInput" style={{ fontSize: 13, color: "#333" }}>
+            Date:
+          </label>
           <input
             id="dateInput"
             type="date"
@@ -374,7 +403,16 @@ const app = useAppBridge();
         </button>
       </div>
 
-      <div style={{ marginBottom: 16, border: "1px solid #eee", borderRadius: 14, padding: 12, background: "#fff" }}>
+      {/* Cancel form */}
+      <div
+        style={{
+          marginBottom: 16,
+          border: "1px solid #eee",
+          borderRadius: 14,
+          padding: 12,
+          background: "#fff",
+        }}
+      >
         <Form method="post" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <input type="hidden" name="intent" value="cancel" />
           <input type="hidden" name="date" value={selectedDate} />
@@ -411,6 +449,7 @@ const app = useAppBridge();
         </Form>
       </div>
 
+      {/* Table */}
       <div style={{ border: "1px solid #eee", borderRadius: 14, overflow: "hidden", background: "#fff" }}>
         <div style={{ padding: "10px 12px", borderBottom: "1px solid #eee", fontSize: 13, color: "#555" }}>
           Total: <b>{rows.length}</b>
@@ -422,19 +461,32 @@ const app = useAppBridge();
               <th style={{ padding: "10px 12px", fontSize: 12, color: "#555" }}>Order</th>
               <th style={{ padding: "10px 12px", fontSize: 12, color: "#555" }}>Voucher</th>
               <th style={{ padding: "10px 12px", fontSize: 12, color: "#555" }}>Pieces</th>
-              <th style={{ padding: "10px 12px", fontSize: 12, color: "#555" }}>Created</th>
+              <th style={{ padding: "10px 12px", fontSize: 12, color: "#555" }}>Created ({TZ})</th>
               <th style={{ padding: "10px 12px", fontSize: 12, color: "#555" }}>Actions</th>
             </tr>
           </thead>
+
           <tbody>
             {rows.map((r) => (
               <tr key={`${r.orderId}::${r.voucherNumber}`} style={{ borderTop: "1px solid #f0f0f0" }}>
                 <td style={{ padding: "10px 12px", fontSize: 13 }}>{r.orderName}</td>
-                <td style={{ padding: "10px 12px", fontSize: 13, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
+
+                <td
+                  style={{
+                    padding: "10px 12px",
+                    fontSize: 13,
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                  }}
+                >
                   {r.voucherNumber}
                 </td>
+
                 <td style={{ padding: "10px 12px", fontSize: 13 }}>{r.pieces || "1"}</td>
-                <td style={{ padding: "10px 12px", fontSize: 12, color: "#666" }}>{r.createdAtIso || ""}</td>
+
+                <td style={{ padding: "10px 12px", fontSize: 12, color: "#666" }}>
+                  {formatCreated(r.createdAtIso)}
+                </td>
+
                 <td style={{ padding: "10px 12px" }}>
                   <button
                     type="button"
