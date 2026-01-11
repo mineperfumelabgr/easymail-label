@@ -1,6 +1,16 @@
-// no React import needed
+import { useMemo } from "react";
+import { useLocation } from "react-router";
 
 export default function AppHome() {
+  const location = useLocation();
+
+  // Preserva shop/host/embedded dalla URL corrente dell'app
+  const vouchersHref = useMemo(() => {
+    const qs = location.search || "";
+    const base = "/app/vouchers";
+    return qs ? `${base}${qs}` : base;
+  }, [location.search]);
+
   return (
     <div
       style={{
@@ -51,7 +61,7 @@ export default function AppHome() {
         </p>
 
         <s-link
-          href="/app/vouchers"
+          href={vouchersHref}
           style={{
             display: "inline-block",
             padding: "10px 14px",

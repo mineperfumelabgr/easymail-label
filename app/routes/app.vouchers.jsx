@@ -37,7 +37,6 @@ function isWithinDay(iso, dateStr) {
   return ymd(dt) === dateStr;
 }
 function uniqRows(rows) {
-  // dedup per orderId + voucherNumber
   const map = new Map();
   for (const r of rows || []) {
     const key = `${r.orderId}::${r.voucherNumber}`;
@@ -49,9 +48,7 @@ function uniqRows(rows) {
 async function adminGraphql(admin, query, variables) {
   const r = await admin.graphql(query, { variables });
   const j = await r.json();
-  if (j?.errors?.length) {
-    throw new Error(j.errors.map((e) => e.message).join(" | "));
-  }
+  if (j?.errors?.length) throw new Error(j.errors.map((e) => e.message).join(" | "));
   return j;
 }
 
@@ -62,7 +59,6 @@ function pickMessage(j) {
   return "";
 }
 
-// Chiamiamo EasyMail direttamente qui (server-side), così NON dipendiamo da cookie embedded
 async function callCancelEasyMail(number) {
   if (!process.env.EASYMAIL_USER || !process.env.EASYMAIL_PASSWORD) {
     return { ok: false, message: "Missing EASYMAIL_USER / EASYMAIL_PASSWORD in .env" };
@@ -125,7 +121,7 @@ export const loader = async ({ request }) => {
   const url = new URL(request.url);
   const date = url.searchParams.get("date") || ymd(new Date());
 
-  // ✅ IMPORTANT: preserviamo shop/host per evitare redirect a /auth/login quando navighi
+  // preserviamo shop/host (embedded)
   const shop = url.searchParams.get("shop") || "";
   const host = url.searchParams.get("host") || "";
 
@@ -164,7 +160,6 @@ export const loader = async ({ request }) => {
       cursor = e.cursor;
       const o = e.node;
 
-      // stop early: once orders updatedAt are older than the requested date
       const updatedAt = new Date(o.updatedAt);
       if (!Number.isNaN(updatedAt.getTime())) {
         const updatedYmd = ymd(updatedAt);
@@ -179,7 +174,6 @@ export const loader = async ({ request }) => {
       const currentPieces = safeStr(o?.mfPieces?.value) || "1";
       const history = parseHistory(safeStr(o?.mfHistory?.value));
 
-      // current
       if (currentVoucher && isWithinDay(currentCreated, date)) {
         rows.push({
           orderName: safeStr(o.name),
@@ -190,7 +184,6 @@ export const loader = async ({ request }) => {
         });
       }
 
-      // history
       for (const h of history) {
         const vn = safeStr(h?.voucherNumber);
         const ca = safeStr(h?.createdAtIso);
@@ -211,7 +204,6 @@ export const loader = async ({ request }) => {
 
   const deduped = uniqRows(rows);
   deduped.sort((a, b) => (b.createdAtIso || "").localeCompare(a.createdAtIso || ""));
-
   return { date, rows: deduped, shop, host };
 };
 
@@ -223,13 +215,8 @@ export const action = async ({ request }) => {
   const voucherNumberRaw = safeStr(form.get("voucherNumber")).trim();
   const date = safeStr(form.get("date")) || ymd(new Date());
 
-  if (intent !== "cancel") {
-    return { ok: false, message: "Unknown action.", date };
-  }
-
-  if (!voucherNumberRaw) {
-    return { ok: false, message: "Please enter a voucher number.", date };
-  }
+  if (intent !== "cancel") return { ok: false, message: "Unknown action.", date };
+  if (!voucherNumberRaw) return { ok: false, message: "Please enter a voucher number.", date };
 
   const num = Number(voucherNumberRaw);
   if (!Number.isFinite(num) || num <= 0) {
@@ -240,13 +227,8 @@ export const action = async ({ request }) => {
 
   if (!out.ok) {
     const extra = out.preview ? ` Preview: ${out.preview}` : "";
-    return {
-      ok: false,
-      message: `Cancel failed for ${voucherNumberRaw}: ${out.message}${extra}`,
-      date,
-    };
+    return { ok: false, message: `Cancel failed for ${voucherNumberRaw}: ${out.message}${extra}`, date };
   }
-
   if (!out.result) {
     return { ok: false, message: `Cancel failed for ${voucherNumberRaw}: ${out.message}`, date };
   }
@@ -262,7 +244,6 @@ export default function VouchersPage() {
   const [selectedDate, setSelectedDate] = useState(actionData?.date || date);
   const isSubmitting = nav.state === "submitting";
 
-  // ✅ querystring embedded: shop/host/embedded=1
   const embedQS = useMemo(() => {
     const p = new URLSearchParams();
     if (shop) p.set("shop", shop);
@@ -280,40 +261,31 @@ export default function VouchersPage() {
     return withEmbed(`/app/vouchers?date=${encodeURIComponent(selectedDate)}`);
   }, [withEmbed, selectedDate]);
 
-  // ✅ View/Print: apri la route interna che mostra la PDF inline (ma CON shop/host -> niente /auth/login)
+  // ✅ View/Print: stessa tab embedded (NO nuova scheda) => niente login
   const openLabel = useCallback(
     async (voucherNumber) => {
       if (!voucherNumber) throw new Error("Missing voucher number.");
 
       const back = `/app/vouchers?date=${encodeURIComponent(selectedDate)}`;
+
       const url = withEmbed(
         `/app/easymail-label-view?number=${encodeURIComponent(voucherNumber)}&inline=1&back=${encodeURIComponent(
           back
         )}`
       );
 
-      window.open(url, "_blank", "noopener,noreferrer");
+      window.location.assign(url);
     },
     [withEmbed, selectedDate]
   );
 
-  const printThisPage = useCallback(() => {
-    window.print();
-  }, []);
+  const printThisPage = useCallback(() => window.print(), []);
 
   return (
-    <div
-      style={{
-        maxWidth: 980,
-        margin: "24px auto",
-        padding: 16,
-        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
-      }}
-    >
+    <div style={{ maxWidth: 980, margin: "24px auto", padding: 16, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif" }}>
       <h1 style={{ fontSize: 20, marginBottom: 6 }}>Daily labels</h1>
       <p style={{ marginTop: 0, color: "#666" }}>Labels created on a specific day (based on Shopify metafields).</p>
 
-      {/* Banner */}
       {actionData?.message && (
         <div
           style={{
@@ -333,12 +305,9 @@ export default function VouchersPage() {
         </div>
       )}
 
-      {/* Controls */}
       <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 14 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <label htmlFor="dateInput" style={{ fontSize: 13, color: "#333" }}>
-            Date:
-          </label>
+          <label htmlFor="dateInput" style={{ fontSize: 13, color: "#333" }}>Date:</label>
           <input
             id="dateInput"
             type="date"
@@ -379,7 +348,6 @@ export default function VouchersPage() {
         </button>
       </div>
 
-      {/* Cancel form */}
       <div style={{ marginBottom: 16, border: "1px solid #eee", borderRadius: 14, padding: 12, background: "#fff" }}>
         <Form method="post" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <input type="hidden" name="intent" value="cancel" />
@@ -417,7 +385,6 @@ export default function VouchersPage() {
         </Form>
       </div>
 
-      {/* Table */}
       <div style={{ border: "1px solid #eee", borderRadius: 14, overflow: "hidden", background: "#fff" }}>
         <div style={{ padding: "10px 12px", borderBottom: "1px solid #eee", fontSize: 13, color: "#555" }}>
           Total: <b>{rows.length}</b>
@@ -437,13 +404,7 @@ export default function VouchersPage() {
             {rows.map((r) => (
               <tr key={`${r.orderId}::${r.voucherNumber}`} style={{ borderTop: "1px solid #f0f0f0" }}>
                 <td style={{ padding: "10px 12px", fontSize: 13 }}>{r.orderName}</td>
-                <td
-                  style={{
-                    padding: "10px 12px",
-                    fontSize: 13,
-                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                  }}
-                >
+                <td style={{ padding: "10px 12px", fontSize: 13, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
                   {r.voucherNumber}
                 </td>
                 <td style={{ padding: "10px 12px", fontSize: 13 }}>{r.pieces || "1"}</td>
