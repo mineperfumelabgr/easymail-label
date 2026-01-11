@@ -1,8 +1,7 @@
+
 import { useMemo, useState, useCallback } from "react";
 import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 import { authenticate } from "../shopify.server";
-import { useAppBridge } from "@shopify/app-bridge-react";
-import { getSessionToken } from "@shopify/app-bridge/utilities";
 
 const NS = "easymail";
 const KEY_VOUCHER = "voucher_number";
@@ -249,7 +248,6 @@ export const action = async ({ request }) => {
 };
 
 export default function VouchersPage() {
-  const app = useAppBridge();
 
   const { date, rows } = useLoaderData();
   const actionData = useActionData();
@@ -262,37 +260,22 @@ export default function VouchersPage() {
     return `/app/vouchers?date=${encodeURIComponent(selectedDate)}`;
   }, [selectedDate]);
 
-  // ✅ Apri PDF senza login: fetch con session token -> blob -> window.open(blobUrl)
-  const openLabel = useCallback(
-    async (voucherNumber) => {
-      const token = await getSessionToken(app);
 
-      const url =
-        `/api/easymail-label-pdf?number=${encodeURIComponent(voucherNumber)}` +
-        `&inline=1&filename=${encodeURIComponent(`Easymail_Label_${selectedDate}_${voucherNumber}.pdf`)}`;
+const openLabel = useCallback(
+  async (voucherNumber) => {
+    if (!voucherNumber) throw new Error("Missing voucher number.");
 
-      const res = await fetch(url, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+    // ✅ Apriamo la label dentro l'app (stessa tab iframe) -> niente login
+    const url =
+      `/app/easymail-label-view?number=${encodeURIComponent(voucherNumber)}` +
+      `&inline=1&back=${encodeURIComponent(`/app/vouchers?date=${selectedDate}`)}`;
 
-      if (!res.ok) {
-        const t = await res.text().catch(() => "");
-        throw new Error(`Label fetch failed (${res.status}). ${t.slice(0, 200)}`);
-      }
+    window.location.assign(url);
+  },
+  [selectedDate]
+);
 
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
 
-      window.open(blobUrl, "_blank", "noopener,noreferrer");
-
-      // cleanup dopo un po’
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
-    },
-    [app, selectedDate]
-  );
 
   const printThisPage = useCallback(() => {
     window.print();
