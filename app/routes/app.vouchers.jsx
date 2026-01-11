@@ -1,12 +1,18 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback } from "react";
 import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 import { authenticate } from "../shopify.server";
+import { useAppBridge } from "@shopify/app-bridge-react";
+import { getSessionToken } from "@shopify/app-bridge/utilities";
 
 const NS = "easymail";
 const KEY_VOUCHER = "voucher_number";
 const KEY_CREATED_AT = "created_at";
 const KEY_PIECES = "pieces";
 const KEY_HISTORY = "voucher_history";
+
+// Live JSON CancelVoucher (tuo live: JSON2)
+const ESM_CANCEL_VOUCHER =
+  "https://webservices.easy-mail.gr/WcfServiceJSON2/Service1.svc/CancelVoucher";
 
 function ymd(d) {
   const yyyy = d.getFullYear();
@@ -32,6 +38,15 @@ function isWithinDay(iso, dateStr) {
   if (Number.isNaN(dt.getTime())) return false;
   return ymd(dt) === dateStr;
 }
+function uniqRows(rows) {
+  // dedup per orderId + voucherNumber
+  const map = new Map();
+  for (const r of rows || []) {
+    const key = `${r.orderId}::${r.voucherNumber}`;
+    if (!map.has(key)) map.set(key, r);
+  }
+  return Array.from(map.values());
+}
 
 async function adminGraphql(admin, query, variables) {
   const r = await admin.graphql(query, { variables });
@@ -40,6 +55,70 @@ async function adminGraphql(admin, query, variables) {
     throw new Error(j.errors.map((e) => e.message).join(" | "));
   }
   return j;
+}
+
+function pickMessage(j) {
+  if (!j) return "";
+  if (typeof j.Message === "string" && j.Message.trim()) return j.Message.trim();
+  if (Array.isArray(j.Messages) && j.Messages.length) return j.Messages.filter(Boolean).join(" | ");
+  return "";
+}
+
+// Chiamiamo EasyMail direttamente qui (server-side), così NON dipendiamo da cookie embedded
+async function callCancelEasyMail(number) {
+  if (!process.env.EASYMAIL_USER || !process.env.EASYMAIL_PASSWORD) {
+    return { ok: false, message: "Missing EASYMAIL_USER / EASYMAIL_PASSWORD in .env" };
+  }
+
+  const payloads = [
+    {
+      Number: Number(number),
+      Credential: { UserName: process.env.EASYMAIL_USER, Password: process.env.EASYMAIL_PASSWORD },
+    },
+    {
+      ShipmentNumber: Number(number),
+      Credential: { UserName: process.env.EASYMAIL_USER, Password: process.env.EASYMAIL_PASSWORD },
+    },
+    {
+      Voucher: { ShipmentNumber: Number(number) },
+      Credential: { UserName: process.env.EASYMAIL_USER, Password: process.env.EASYMAIL_PASSWORD },
+    },
+  ];
+
+  let lastPreview = "";
+  for (const bodyObj of payloads) {
+    const resp = await fetch(ESM_CANCEL_VOUCHER, {
+      method: "POST",
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+      body: JSON.stringify(bodyObj),
+    });
+
+    const txt = await resp.text();
+    lastPreview = (txt || "").slice(0, 400);
+
+    let j;
+    try {
+      j = JSON.parse(txt);
+    } catch {
+      continue;
+    }
+
+    if (typeof j?.Result === "boolean") {
+      return {
+        ok: true,
+        result: j.Result,
+        canceled: Boolean(j.Canceled),
+        message: pickMessage(j) || (j.Result ? "OK" : "Cancel failed"),
+        raw: j,
+      };
+    }
+  }
+
+  return {
+    ok: false,
+    message: "EasyMail CancelVoucher did not return a valid JSON response (or unknown payload format).",
+    preview: lastPreview,
+  };
 }
 
 export const loader = async ({ request }) => {
@@ -106,7 +185,6 @@ export const loader = async ({ request }) => {
           voucherNumber: currentVoucher,
           createdAtIso: currentCreated,
           pieces: currentPieces,
-          viewUrl: `/api/easymail-label-pdf?number=${encodeURIComponent(currentVoucher)}&inline=1`,
         });
       }
 
@@ -124,15 +202,15 @@ export const loader = async ({ request }) => {
           voucherNumber: vn,
           createdAtIso: ca,
           pieces: pcs,
-          viewUrl: `/api/easymail-label-pdf?number=${encodeURIComponent(vn)}&inline=1`,
         });
       }
     }
   }
 
-  rows.sort((a, b) => (b.createdAtIso || "").localeCompare(a.createdAtIso || ""));
+  const deduped = uniqRows(rows);
 
-  return { date, rows };
+  deduped.sort((a, b) => (b.createdAtIso || "").localeCompare(a.createdAtIso || ""));
+  return { date, rows: deduped };
 };
 
 export const action = async ({ request }) => {
@@ -140,54 +218,39 @@ export const action = async ({ request }) => {
 
   const form = await request.formData();
   const intent = safeStr(form.get("intent"));
-  const voucherNumber = safeStr(form.get("voucherNumber")).trim();
+  const voucherNumberRaw = safeStr(form.get("voucherNumber")).trim();
   const date = safeStr(form.get("date")) || ymd(new Date());
 
   if (intent !== "cancel") {
     return { ok: false, message: "Unknown action.", date };
   }
 
-  if (!voucherNumber) {
+  if (!voucherNumberRaw) {
     return { ok: false, message: "Please enter a voucher number.", date };
   }
 
-  // Call your existing cancel endpoint using same-origin + current session cookies
-  const u = new URL(request.url);
-  u.pathname = "/api/easymail-cancel-voucher";
-  u.search = "";
-  u.searchParams.set("number", voucherNumber);
-
-  const cookie = request.headers.get("cookie") || "";
-
-  const resp = await fetch(u.toString(), {
-    method: "GET",
-    headers: { cookie },
-  });
-
-  const text = await resp.text();
-  let json = null;
-  try {
-    json = JSON.parse(text);
-  } catch {
-  // ignore malformed JSON
-}
-
-
-  const success = json?.success === true || json?.Result === true || resp.ok;
-
-  if (!success) {
-    const msg =
-      json?.message ||
-      json?.Message ||
-      (text ? text.slice(0, 200) : "") ||
-      "Cancel failed.";
-    return { ok: false, message: `Cancel failed for ${voucherNumber}: ${msg}`, date };
+  const num = Number(voucherNumberRaw);
+  if (!Number.isFinite(num) || num <= 0) {
+    return { ok: false, message: "Invalid voucher number.", date };
   }
 
-  return { ok: true, message: `Voucher ${voucherNumber} cancelled successfully.`, date };
+  const out = await callCancelEasyMail(num);
+
+  if (!out.ok) {
+    const extra = out.preview ? ` Preview: ${out.preview}` : "";
+    return { ok: false, message: `Cancel failed for ${voucherNumberRaw}: ${out.message}${extra}`, date };
+  }
+
+  if (!out.result) {
+    return { ok: false, message: `Cancel failed for ${voucherNumberRaw}: ${out.message}`, date };
+  }
+
+  return { ok: true, message: `Voucher ${voucherNumberRaw} cancelled successfully.`, date };
 };
 
 export default function VouchersPage() {
+  const app = useAppBridge();
+
   const { date, rows } = useLoaderData();
   const actionData = useActionData();
   const nav = useNavigation();
@@ -199,9 +262,41 @@ export default function VouchersPage() {
     return `/app/vouchers?date=${encodeURIComponent(selectedDate)}`;
   }, [selectedDate]);
 
-  const printableHref = useMemo(() => {
-    return `/app/vouchers-print?date=${encodeURIComponent(selectedDate)}`;
-  }, [selectedDate]);
+  // ✅ Apri PDF senza login: fetch con session token -> blob -> window.open(blobUrl)
+  const openLabel = useCallback(
+    async (voucherNumber) => {
+      const token = await getSessionToken(app);
+
+      const url =
+        `/api/easymail-label-pdf?number=${encodeURIComponent(voucherNumber)}` +
+        `&inline=1&filename=${encodeURIComponent(`Easymail_Label_${selectedDate}_${voucherNumber}.pdf`)}`;
+
+      const res = await fetch(url, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) {
+        const t = await res.text().catch(() => "");
+        throw new Error(`Label fetch failed (${res.status}). ${t.slice(0, 200)}`);
+      }
+
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+
+      window.open(blobUrl, "_blank", "noopener,noreferrer");
+
+      // cleanup dopo un po’
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+    },
+    [app, selectedDate]
+  );
+
+  const printThisPage = useCallback(() => {
+    window.print();
+  }, []);
 
   return (
     <div style={{ maxWidth: 980, margin: "24px auto", padding: 16, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif" }}>
@@ -233,14 +328,14 @@ export default function VouchersPage() {
       {/* Controls */}
       <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 14 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-<label htmlFor="dateInput" style={{ fontSize: 13, color: "#333" }}>Date:</label>
-<input
-  id="dateInput"
-  type="date"
-  value={selectedDate}
-  onChange={(e) => setSelectedDate(e.target.value)}
-  style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid #ddd" }}
-/>
+          <label htmlFor="dateInput" style={{ fontSize: 13, color: "#333" }}>Date:</label>
+          <input
+            id="dateInput"
+            type="date"
+            value={selectedDate}
+            onChange={(e) => setSelectedDate(e.target.value)}
+            style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid #ddd" }}
+          />
         </div>
 
         <s-link
@@ -258,124 +353,123 @@ export default function VouchersPage() {
           Refresh
         </s-link>
 
-        <s-link
-          href={printableHref}
-          target="_blank"
-          rel="noopener noreferrer"
+        <button
+          type="button"
+          onClick={printThisPage}
           style={{
-            display: "inline-block",
             padding: "10px 14px",
             borderRadius: 12,
-            background: "#fff",
-            color: "#111",
-            textDecoration: "none",
-            fontSize: 14,
             border: "1px solid #ddd",
+            background: "#fff",
+            cursor: "pointer",
+            fontSize: 14,
           }}
         >
-          Printable view (Save as PDF)
-        </s-link>
+          Print this page
+        </button>
+      </div>
+
+      {/* Cancel form */}
+      <div style={{ marginBottom: 16, border: "1px solid #eee", borderRadius: 14, padding: 12, background: "#fff" }}>
+        <Form method="post" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <input type="hidden" name="intent" value="cancel" />
+          <input type="hidden" name="date" value={selectedDate} />
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ fontSize: 13, color: "#333" }}>Cancel voucher (manual):</div>
+            <input
+              name="voucherNumber"
+              placeholder="e.g. 53708701893"
+              style={{ padding: "10px 12px", borderRadius: 12, border: "1px solid #ddd", minWidth: 240 }}
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            style={{
+              padding: "10px 14px",
+              borderRadius: 12,
+              border: "1px solid #ddd",
+              background: isSubmitting ? "#f5f5f5" : "#111",
+              color: isSubmitting ? "#999" : "#fff",
+              cursor: isSubmitting ? "default" : "pointer",
+              fontSize: 14,
+              marginTop: 18,
+            }}
+          >
+            {isSubmitting ? "..." : "Cancel"}
+          </button>
+
+          <div style={{ fontSize: 12, color: "#666", marginTop: 18 }}>
+            Note: cancellation is possible only if the shipment has not been processed by the courier.
+          </div>
+        </Form>
       </div>
 
       {/* Table */}
-      <div style={{ border: "1px solid #e5e5e5", borderRadius: 14, overflow: "hidden", background: "#fff" }}>
-        <div style={{ padding: 12, borderBottom: "1px solid #eee", fontSize: 13, color: "#666" }}>
-          Found <b>{rows.length}</b> label(s) for <b>{selectedDate}</b>
+      <div style={{ border: "1px solid #eee", borderRadius: 14, overflow: "hidden", background: "#fff" }}>
+        <div style={{ padding: "10px 12px", borderBottom: "1px solid #eee", fontSize: 13, color: "#555" }}>
+          Total: <b>{rows.length}</b>
         </div>
 
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead>
-              <tr style={{ background: "#fafafa" }}>
-                <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>Order</th>
-                <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>Voucher</th>
-                <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>Created</th>
-                <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>Pieces</th>
-                <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>Actions</th>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr style={{ background: "#fafafa", textAlign: "left" }}>
+              <th style={{ padding: "10px 12px", fontSize: 12, color: "#555" }}>Order</th>
+              <th style={{ padding: "10px 12px", fontSize: 12, color: "#555" }}>Voucher</th>
+              <th style={{ padding: "10px 12px", fontSize: 12, color: "#555" }}>Pieces</th>
+              <th style={{ padding: "10px 12px", fontSize: 12, color: "#555" }}>Created</th>
+              <th style={{ padding: "10px 12px", fontSize: 12, color: "#555" }}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={`${r.orderId}::${r.voucherNumber}`} style={{ borderTop: "1px solid #f0f0f0" }}>
+                <td style={{ padding: "10px 12px", fontSize: 13 }}>
+                  {r.orderName}
+                </td>
+                <td style={{ padding: "10px 12px", fontSize: 13, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
+                  {r.voucherNumber}
+                </td>
+                <td style={{ padding: "10px 12px", fontSize: 13 }}>{r.pieces || "1"}</td>
+                <td style={{ padding: "10px 12px", fontSize: 12, color: "#666" }}>
+                  {r.createdAtIso || ""}
+                </td>
+                <td style={{ padding: "10px 12px" }}>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await openLabel(r.voucherNumber);
+                      } catch (e) {
+                        alert(e?.message || "Cannot open label.");
+                      }
+                    }}
+                    style={{
+                      padding: "8px 10px",
+                      borderRadius: 12,
+                      border: "1px solid #ddd",
+                      background: "#fff",
+                      cursor: "pointer",
+                      fontSize: 13,
+                    }}
+                  >
+                    View / Print
+                  </button>
+                </td>
               </tr>
-            </thead>
+            ))}
 
-            <tbody>
-              {rows.map((r) => (
-                <tr key={`${r.orderId}-${r.voucherNumber}`}>
-                  <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", whiteSpace: "nowrap" }}>
-                    {r.orderName}
-                  </td>
-                  <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", whiteSpace: "nowrap" }}>
-                    <b>{r.voucherNumber}</b>
-                  </td>
-                  <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", whiteSpace: "nowrap" }}>
-                    {r.createdAtIso ? new Date(r.createdAtIso).toLocaleString() : ""}
-                  </td>
-                  <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", whiteSpace: "nowrap" }}>
-                    {r.pieces || "1"}
-                  </td>
-                  <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
-                    <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                      <a
-                        href={r.viewUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{
-                          display: "inline-block",
-                          padding: "8px 10px",
-                          borderRadius: 10,
-                          border: "1px solid #ddd",
-                          textDecoration: "none",
-                          color: "#111",
-                          background: "#fff",
-                        }}
-                      >
-                        View/Print
-                      </a>
-
-                      <Form method="post" style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <input type="hidden" name="intent" value="cancel" />
-                        <input type="hidden" name="date" value={selectedDate} />
-                        <input
-                          name="voucherNumber"
-                          defaultValue={r.voucherNumber}
-                          style={{
-                            width: 150,
-                            padding: "8px 10px",
-                            borderRadius: 10,
-                            border: "1px solid #ddd",
-                          }}
-                        />
-                        <button
-                          type="submit"
-                          disabled={isSubmitting}
-                          style={{
-                            padding: "8px 10px",
-                            borderRadius: 10,
-                            border: "1px solid #ddd",
-                            background: "#fff1f0",
-                            color: "#111",
-                            cursor: "pointer",
-                          }}
-                        >
-                          {isSubmitting ? "..." : "Cancel"}
-                        </button>
-                      </Form>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-
-              {rows.length === 0 && (
-                <tr>
-                  <td colSpan={5} style={{ padding: 16, color: "#666" }}>
-                    No labels found for this date.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <div style={{ padding: 12, fontSize: 12, color: "#777", borderTop: "1px solid #eee" }}>
-          Note: the list is based on Shopify metafields (current voucher + voucher_history). After cancelling a voucher, click <b>Refresh</b>.
-        </div>
+            {!rows.length && (
+              <tr>
+                <td colSpan={5} style={{ padding: 18, fontSize: 13, color: "#777" }}>
+                  No labels found for this day.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );
