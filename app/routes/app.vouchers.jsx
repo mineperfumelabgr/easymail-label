@@ -58,8 +58,7 @@ async function adminGraphql(admin, query, variables) {
 function pickMessage(j) {
   if (!j) return "";
   if (typeof j.Message === "string" && j.Message.trim()) return j.Message.trim();
-  if (Array.isArray(j.Messages) && j.Messages.length)
-    return j.Messages.filter(Boolean).join(" | ");
+  if (Array.isArray(j.Messages) && j.Messages.length) return j.Messages.filter(Boolean).join(" | ");
   return "";
 }
 
@@ -115,8 +114,7 @@ async function callCancelEasyMail(number) {
 
   return {
     ok: false,
-    message:
-      "EasyMail CancelVoucher did not return a valid JSON response (or unknown payload format).",
+    message: "EasyMail CancelVoucher did not return a valid JSON response (or unknown payload format).",
     preview: lastPreview,
   };
 }
@@ -126,6 +124,10 @@ export const loader = async ({ request }) => {
 
   const url = new URL(request.url);
   const date = url.searchParams.get("date") || ymd(new Date());
+
+  // ✅ IMPORTANT: preserviamo shop/host per evitare redirect a /auth/login quando navighi
+  const shop = url.searchParams.get("shop") || "";
+  const host = url.searchParams.get("host") || "";
 
   let hasNext = true;
   let cursor = null;
@@ -209,7 +211,8 @@ export const loader = async ({ request }) => {
 
   const deduped = uniqRows(rows);
   deduped.sort((a, b) => (b.createdAtIso || "").localeCompare(a.createdAtIso || ""));
-  return { date, rows: deduped };
+
+  return { date, rows: deduped, shop, host };
 };
 
 export const action = async ({ request }) => {
@@ -252,42 +255,47 @@ export const action = async ({ request }) => {
 };
 
 export default function VouchersPage() {
-  const { date, rows } = useLoaderData();
+  const { date, rows, shop, host } = useLoaderData();
   const actionData = useActionData();
   const nav = useNavigation();
 
   const [selectedDate, setSelectedDate] = useState(actionData?.date || date);
   const isSubmitting = nav.state === "submitting";
 
+  // ✅ querystring embedded: shop/host/embedded=1
+  const embedQS = useMemo(() => {
+    const p = new URLSearchParams();
+    if (shop) p.set("shop", shop);
+    if (host) p.set("host", host);
+    p.set("embedded", "1");
+    return p.toString();
+  }, [shop, host]);
+
+  const withEmbed = useCallback(
+    (path) => (path.includes("?") ? `${path}&${embedQS}` : `${path}?${embedQS}`),
+    [embedQS]
+  );
+
   const refreshHref = useMemo(() => {
-    return `/app/vouchers?date=${encodeURIComponent(selectedDate)}`;
-  }, [selectedDate]);
+    return withEmbed(`/app/vouchers?date=${encodeURIComponent(selectedDate)}`);
+  }, [withEmbed, selectedDate]);
 
-const openLabel = useCallback(
-  async (voucherNumber) => {
-    if (!voucherNumber) throw new Error("Missing voucher number.");
+  // ✅ View/Print: apri la route interna che mostra la PDF inline (ma CON shop/host -> niente /auth/login)
+  const openLabel = useCallback(
+    async (voucherNumber) => {
+      if (!voucherNumber) throw new Error("Missing voucher number.");
 
-    // 🔑 prendo shop/host dall'URL corrente dell'embedded app
-    const here = new URL(window.location.href);
-    const shop = here.searchParams.get("shop");
-    const host = here.searchParams.get("host");
+      const back = `/app/vouchers?date=${encodeURIComponent(selectedDate)}`;
+      const url = withEmbed(
+        `/app/easymail-label-view?number=${encodeURIComponent(voucherNumber)}&inline=1&back=${encodeURIComponent(
+          back
+        )}`
+      );
 
-    if (!shop) throw new Error("Missing shop parameter in URL (shop=...).");
-    if (!host) throw new Error("Missing host parameter in URL (host=...).");
-
-    const url =
-      `/app/label-pdf?number=${encodeURIComponent(voucherNumber)}` +
-      `&inline=1` +
-      `&filename=${encodeURIComponent(`Easymail_Label_${selectedDate}_${voucherNumber}.pdf`)}` +
-      `&shop=${encodeURIComponent(shop)}` +
-      `&host=${encodeURIComponent(host)}` +
-      `&embedded=1`;
-
-    // ✅ nuova tab senza perdere la lista
-    window.open(url, "_blank", "noopener,noreferrer");
-  },
-  [selectedDate]
-);
+      window.open(url, "_blank", "noopener,noreferrer");
+    },
+    [withEmbed, selectedDate]
+  );
 
   const printThisPage = useCallback(() => {
     window.print();
@@ -303,9 +311,7 @@ const openLabel = useCallback(
       }}
     >
       <h1 style={{ fontSize: 20, marginBottom: 6 }}>Daily labels</h1>
-      <p style={{ marginTop: 0, color: "#666" }}>
-        Labels created on a specific day (based on Shopify metafields).
-      </p>
+      <p style={{ marginTop: 0, color: "#666" }}>Labels created on a specific day (based on Shopify metafields).</p>
 
       {/* Banner */}
       {actionData?.message && (
@@ -328,15 +334,7 @@ const openLabel = useCallback(
       )}
 
       {/* Controls */}
-      <div
-        style={{
-          display: "flex",
-          gap: 12,
-          alignItems: "center",
-          flexWrap: "wrap",
-          marginBottom: 14,
-        }}
-      >
+      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 14 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <label htmlFor="dateInput" style={{ fontSize: 13, color: "#333" }}>
             Date:
@@ -350,8 +348,7 @@ const openLabel = useCallback(
           />
         </div>
 
-        {/* ✅ NO s-link: usiamo anchor normale */}
-        <a
+        <s-link
           href={refreshHref}
           style={{
             display: "inline-block",
@@ -364,7 +361,7 @@ const openLabel = useCallback(
           }}
         >
           Refresh
-        </a>
+        </s-link>
 
         <button
           type="button"
@@ -383,15 +380,7 @@ const openLabel = useCallback(
       </div>
 
       {/* Cancel form */}
-      <div
-        style={{
-          marginBottom: 16,
-          border: "1px solid #eee",
-          borderRadius: 14,
-          padding: 12,
-          background: "#fff",
-        }}
-      >
+      <div style={{ marginBottom: 16, border: "1px solid #eee", borderRadius: 14, padding: 12, background: "#fff" }}>
         <Form method="post" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <input type="hidden" name="intent" value="cancel" />
           <input type="hidden" name="date" value={selectedDate} />
