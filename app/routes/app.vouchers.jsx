@@ -55,7 +55,8 @@ async function adminGraphql(admin, query, variables) {
 function pickMessage(j) {
   if (!j) return "";
   if (typeof j.Message === "string" && j.Message.trim()) return j.Message.trim();
-  if (Array.isArray(j.Messages) && j.Messages.length) return j.Messages.filter(Boolean).join(" | ");
+  if (Array.isArray(j.Messages) && j.Messages.length)
+    return j.Messages.filter(Boolean).join(" | ");
   return "";
 }
 
@@ -110,9 +111,17 @@ async function callCancelEasyMail(number) {
 
   return {
     ok: false,
-    message: "EasyMail CancelVoucher did not return a valid JSON response (or unknown payload format).",
+    message:
+      "EasyMail CancelVoucher did not return a valid JSON response (or unknown payload format).",
     preview: lastPreview,
   };
+}
+
+// Extract numeric id from Shopify GID: gid://shopify/Order/1234567890
+function orderNumericId(orderGid) {
+  const s = String(orderGid || "");
+  const m = s.match(/\/Order\/(\d+)$/);
+  return m ? m[1] : "";
 }
 
 export const loader = async ({ request }) => {
@@ -219,9 +228,7 @@ export const action = async ({ request }) => {
   if (!voucherNumberRaw) return { ok: false, message: "Please enter a voucher number.", date };
 
   const num = Number(voucherNumberRaw);
-  if (!Number.isFinite(num) || num <= 0) {
-    return { ok: false, message: "Invalid voucher number.", date };
-  }
+  if (!Number.isFinite(num) || num <= 0) return { ok: false, message: "Invalid voucher number.", date };
 
   const out = await callCancelEasyMail(num);
 
@@ -261,22 +268,24 @@ export default function VouchersPage() {
     return withEmbed(`/app/vouchers?date=${encodeURIComponent(selectedDate)}`);
   }, [withEmbed, selectedDate]);
 
-  // ✅ View/Print: stessa tab embedded (NO nuova scheda) => niente login
-  const openLabel = useCallback(
-    async (voucherNumber) => {
-      if (!voucherNumber) throw new Error("Missing voucher number.");
-
-      const back = `/app/vouchers?date=${encodeURIComponent(selectedDate)}`;
-
-      const url = withEmbed(
-        `/app/easymail-label-view?number=${encodeURIComponent(voucherNumber)}&inline=1&back=${encodeURIComponent(
-          back
-        )}`
-      );
-
-      window.location.assign(url);
+  // ✅ NEW: View Order (apre in Shopify Admin, non richiede login app)
+  const openOrder = useCallback(
+    (orderGid) => {
+      const numeric = orderNumericId(orderGid);
+      if (!numeric) {
+        alert("Cannot open order: missing numeric id.");
+        return;
+      }
+      // shop handle = la parte prima di .myshopify.com (mineperfumelabgr)
+      const storeHandle = (shop || "").replace(/\.myshopify\.com$/i, "");
+      if (!storeHandle) {
+        alert("Cannot open order: missing shop domain.");
+        return;
+      }
+      const adminUrl = `https://admin.shopify.com/store/${storeHandle}/orders/${numeric}`;
+      window.open(adminUrl, "_blank", "noopener,noreferrer");
     },
-    [withEmbed, selectedDate]
+    [shop]
   );
 
   const printThisPage = useCallback(() => window.print(), []);
@@ -284,7 +293,9 @@ export default function VouchersPage() {
   return (
     <div style={{ maxWidth: 980, margin: "24px auto", padding: 16, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif" }}>
       <h1 style={{ fontSize: 20, marginBottom: 6 }}>Daily labels</h1>
-      <p style={{ marginTop: 0, color: "#666" }}>Labels created on a specific day (based on Shopify metafields).</p>
+      <p style={{ marginTop: 0, color: "#666" }}>
+        Labels created on a specific day (based on Shopify metafields).
+      </p>
 
       {actionData?.message && (
         <div
@@ -412,13 +423,7 @@ export default function VouchersPage() {
                 <td style={{ padding: "10px 12px" }}>
                   <button
                     type="button"
-                    onClick={async () => {
-                      try {
-                        await openLabel(r.voucherNumber);
-                      } catch (e) {
-                        alert(e?.message || "Cannot open label.");
-                      }
-                    }}
+                    onClick={() => openOrder(r.orderId)}
                     style={{
                       padding: "8px 10px",
                       borderRadius: 12,
@@ -428,7 +433,7 @@ export default function VouchersPage() {
                       fontSize: 13,
                     }}
                   >
-                    View / Print
+                    View order
                   </button>
                 </td>
               </tr>
