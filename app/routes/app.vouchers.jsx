@@ -267,12 +267,23 @@ const openLabel = useCallback(
   async (voucherNumber) => {
     if (!voucherNumber) throw new Error("Missing voucher number.");
 
-    // ✅ route /app => embedded => no login loop
+    // 🔑 prendo shop/host dall'URL corrente dell'embedded app
+    const here = new URL(window.location.href);
+    const shop = here.searchParams.get("shop");
+    const host = here.searchParams.get("host");
+
+    if (!shop) throw new Error("Missing shop parameter in URL (shop=...).");
+    if (!host) throw new Error("Missing host parameter in URL (host=...).");
+
     const url =
       `/app/label-pdf?number=${encodeURIComponent(voucherNumber)}` +
-      `&inline=1&filename=${encodeURIComponent(`Easymail_Label_${selectedDate}_${voucherNumber}.pdf`)}`;
+      `&inline=1` +
+      `&filename=${encodeURIComponent(`Easymail_Label_${selectedDate}_${voucherNumber}.pdf`)}` +
+      `&shop=${encodeURIComponent(shop)}` +
+      `&host=${encodeURIComponent(host)}` +
+      `&embedded=1`;
 
-    // nuova tab (così non perdi la lista)
+    // ✅ nuova tab senza perdere la lista
     window.open(url, "_blank", "noopener,noreferrer");
   },
   [selectedDate]
