@@ -128,16 +128,6 @@ function orderNumericId(orderGid) {
   return m ? m[1] : "";
 }
 
-// ✅ prende lo store handle dall'URL corrente di Shopify Admin
-function currentStoreHandleFromAdminPath() {
-  try {
-    const p = window.location.pathname || "";
-    // e.g. /store/mineperfumelabgr/apps/...
-    const m = p.match(/\/store\/([^/]+)/);
-    return m ? m[1] : "";
-  } catch {
-    return "";
-  }
 }
 
 export const loader = async ({ request }) => {
