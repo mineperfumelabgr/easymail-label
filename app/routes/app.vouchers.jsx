@@ -128,7 +128,6 @@ function orderNumericId(orderGid) {
   return m ? m[1] : "";
 }
 
-}
 
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
