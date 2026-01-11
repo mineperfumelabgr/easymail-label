@@ -1,6 +1,8 @@
 import { useMemo, useState, useCallback } from "react";
 import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 import { authenticate } from "../shopify.server";
+import { useAppBridge } from "@shopify/app-bridge-react";
+import { Redirect } from "@shopify/app-bridge/actions";
 
 const NS = "easymail";
 const KEY_VOUCHER = "voucher_number";
@@ -267,6 +269,7 @@ export const action = async ({ request }) => {
 };
 
 export default function VouchersPage() {
+const app = useAppBridge();
   const { date, rows, shop, host } = useLoaderData();
   const actionData = useActionData();
   const nav = useNavigation();
@@ -291,24 +294,23 @@ export default function VouchersPage() {
     return withEmbed(`/app/vouchers?date=${encodeURIComponent(selectedDate)}`);
   }, [withEmbed, selectedDate]);
 
-  // ✅ View Order: usa lo store handle reale dall'URL corrente
-  const openOrder = useCallback((orderGid) => {
-    const numeric = orderNumericId(orderGid);
-    if (!numeric) {
-      alert("Cannot open order: missing numeric id.");
-      return;
-    }
+  const openOrder = useCallback(
+    (orderGid) => {
+      const numeric = orderNumericId(orderGid);
+      if (!numeric) {
+        alert("Cannot open order: missing numeric id.");
+        return;
+      }
 
-    const storeHandle = currentStoreHandleFromAdminPath();
-    if (!storeHandle) {
-      alert("Cannot open order: missing store handle from URL.");
-      return;
-    }
+      const redirect = Redirect.create(app);
 
-    // ✅ URL corretta (senza /store/<id>/ extra)
-    const adminUrl = `https://admin.shopify.com/store/${storeHandle}/orders/${numeric}`;
-    window.open(adminUrl, "_blank", "noopener,noreferrer");
-  }, []);
+      // ✅ apre l’admin direttamente, senza store handle
+      redirect.dispatch(Redirect.Action.ADMIN_PATH, {
+        path: `/orders/${numeric}`,
+      });
+    },
+    [app]
+  );
 
   const printThisPage = useCallback(() => {
     window.print();
