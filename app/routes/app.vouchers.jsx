@@ -37,6 +37,7 @@ function isWithinDay(iso, dateStr) {
   return ymd(dt) === dateStr;
 }
 function uniqRows(rows) {
+  // dedup per orderId + voucherNumber
   const map = new Map();
   for (const r of rows || []) {
     const key = `${r.orderId}::${r.voucherNumber}`;
@@ -60,6 +61,7 @@ function pickMessage(j) {
   return "";
 }
 
+// Chiamiamo EasyMail direttamente qui (server-side), così NON dipendiamo da cookie embedded
 async function callCancelEasyMail(number) {
   if (!process.env.EASYMAIL_USER || !process.env.EASYMAIL_PASSWORD) {
     return { ok: false, message: "Missing EASYMAIL_USER / EASYMAIL_PASSWORD in .env" };
@@ -124,13 +126,25 @@ function orderNumericId(orderGid) {
   return m ? m[1] : "";
 }
 
+// ✅ prende lo store handle dall'URL corrente di Shopify Admin
+function currentStoreHandleFromAdminPath() {
+  try {
+    const p = window.location.pathname || "";
+    // e.g. /store/mineperfumelabgr/apps/...
+    const m = p.match(/\/store\/([^/]+)/);
+    return m ? m[1] : "";
+  } catch {
+    return "";
+  }
+}
+
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
 
   const url = new URL(request.url);
   const date = url.searchParams.get("date") || ymd(new Date());
 
-  // preserviamo shop/host (embedded)
+  // preserviamo shop/host (embedded) se presenti
   const shop = url.searchParams.get("shop") || "";
   const host = url.searchParams.get("host") || "";
 
@@ -169,6 +183,7 @@ export const loader = async ({ request }) => {
       cursor = e.cursor;
       const o = e.node;
 
+      // stop early: once orders updatedAt are older than the requested date
       const updatedAt = new Date(o.updatedAt);
       if (!Number.isNaN(updatedAt.getTime())) {
         const updatedYmd = ymd(updatedAt);
@@ -183,6 +198,7 @@ export const loader = async ({ request }) => {
       const currentPieces = safeStr(o?.mfPieces?.value) || "1";
       const history = parseHistory(safeStr(o?.mfHistory?.value));
 
+      // current
       if (currentVoucher && isWithinDay(currentCreated, date)) {
         rows.push({
           orderName: safeStr(o.name),
@@ -193,6 +209,7 @@ export const loader = async ({ request }) => {
         });
       }
 
+      // history
       for (const h of history) {
         const vn = safeStr(h?.voucherNumber);
         const ca = safeStr(h?.createdAtIso);
@@ -225,10 +242,15 @@ export const action = async ({ request }) => {
   const date = safeStr(form.get("date")) || ymd(new Date());
 
   if (intent !== "cancel") return { ok: false, message: "Unknown action.", date };
-  if (!voucherNumberRaw) return { ok: false, message: "Please enter a voucher number.", date };
+
+  if (!voucherNumberRaw) {
+    return { ok: false, message: "Please enter a voucher number.", date };
+  }
 
   const num = Number(voucherNumberRaw);
-  if (!Number.isFinite(num) || num <= 0) return { ok: false, message: "Invalid voucher number.", date };
+  if (!Number.isFinite(num) || num <= 0) {
+    return { ok: false, message: "Invalid voucher number.", date };
+  }
 
   const out = await callCancelEasyMail(num);
 
@@ -236,6 +258,7 @@ export const action = async ({ request }) => {
     const extra = out.preview ? ` Preview: ${out.preview}` : "";
     return { ok: false, message: `Cancel failed for ${voucherNumberRaw}: ${out.message}${extra}`, date };
   }
+
   if (!out.result) {
     return { ok: false, message: `Cancel failed for ${voucherNumberRaw}: ${out.message}`, date };
   }
@@ -268,27 +291,28 @@ export default function VouchersPage() {
     return withEmbed(`/app/vouchers?date=${encodeURIComponent(selectedDate)}`);
   }, [withEmbed, selectedDate]);
 
-  // ✅ NEW: View Order (apre in Shopify Admin, non richiede login app)
-  const openOrder = useCallback(
-    (orderGid) => {
-      const numeric = orderNumericId(orderGid);
-      if (!numeric) {
-        alert("Cannot open order: missing numeric id.");
-        return;
-      }
-      // shop handle = la parte prima di .myshopify.com (mineperfumelabgr)
-      const storeHandle = (shop || "").replace(/\.myshopify\.com$/i, "");
-      if (!storeHandle) {
-        alert("Cannot open order: missing shop domain.");
-        return;
-      }
-      const adminUrl = `https://admin.shopify.com/store/${storeHandle}/orders/${numeric}`;
-      window.open(adminUrl, "_blank", "noopener,noreferrer");
-    },
-    [shop]
-  );
+  // ✅ View Order: usa lo store handle reale dall'URL corrente
+  const openOrder = useCallback((orderGid) => {
+    const numeric = orderNumericId(orderGid);
+    if (!numeric) {
+      alert("Cannot open order: missing numeric id.");
+      return;
+    }
 
-  const printThisPage = useCallback(() => window.print(), []);
+    const storeHandle = currentStoreHandleFromAdminPath();
+    if (!storeHandle) {
+      alert("Cannot open order: missing store handle from URL.");
+      return;
+    }
+
+    // ✅ URL corretta (senza /store/<id>/ extra)
+    const adminUrl = `https://admin.shopify.com/store/${storeHandle}/orders/${numeric}`;
+    window.open(adminUrl, "_blank", "noopener,noreferrer");
+  }, []);
+
+  const printThisPage = useCallback(() => {
+    window.print();
+  }, []);
 
   return (
     <div style={{ maxWidth: 980, margin: "24px auto", padding: 16, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif" }}>
