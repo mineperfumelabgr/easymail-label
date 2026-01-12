@@ -1,10 +1,6 @@
 import { useMemo, useState, useCallback } from "react";
 import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 import { authenticate } from "../shopify.server";
-import { useAppBridge } from "@shopify/app-bridge-react";
-import { Redirect } from "@shopify/app-bridge/actions";
-
-const TZ = "Europe/Athens";
 
 const NS = "easymail";
 const KEY_VOUCHER = "voucher_number";
@@ -16,21 +12,15 @@ const KEY_HISTORY = "voucher_history";
 const ESM_CANCEL_VOUCHER =
   "https://webservices.easy-mail.gr/WcfServiceJSON2/Service1.svc/CancelVoucher";
 
-function safeStr(v) {
-  return String(v ?? "");
+function ymd(d) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
 
-// YYYY-MM-DD in a specific timezone (important: Render server is usually UTC)
-function ymdTz(date, timeZone = TZ) {
-  const dt = date instanceof Date ? date : new Date(date);
-  if (Number.isNaN(dt.getTime())) return "";
-  const fmt = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-  return fmt.format(dt); // en-CA => YYYY-MM-DD
+function safeStr(v) {
+  return String(v ?? "");
 }
 
 function parseHistory(raw) {
@@ -43,11 +33,11 @@ function parseHistory(raw) {
   }
 }
 
-function isWithinDayTz(iso, dateStr, timeZone = TZ) {
+function isWithinDay(iso, dateStr) {
   if (!iso) return false;
   const dt = new Date(iso);
   if (Number.isNaN(dt.getTime())) return false;
-  return ymdTz(dt, timeZone) === dateStr;
+  return ymd(dt) === dateStr;
 }
 
 function uniqRows(rows) {
@@ -72,9 +62,8 @@ async function adminGraphql(admin, query, variables) {
 function pickMessage(j) {
   if (!j) return "";
   if (typeof j.Message === "string" && j.Message.trim()) return j.Message.trim();
-  if (Array.isArray(j.Messages) && j.Messages.length) {
+  if (Array.isArray(j.Messages) && j.Messages.length)
     return j.Messages.filter(Boolean).join(" | ");
-  }
   return "";
 }
 
@@ -130,7 +119,8 @@ async function callCancelEasyMail(number) {
 
   return {
     ok: false,
-    message: "EasyMail CancelVoucher did not return a valid JSON response (or unknown payload format).",
+    message:
+      "EasyMail CancelVoucher did not return a valid JSON response (or unknown payload format).",
     preview: lastPreview,
   };
 }
@@ -142,15 +132,20 @@ function orderNumericId(orderGid) {
   return m ? m[1] : "";
 }
 
+// Extract store handle from current admin URL path: /store/<handle>/...
+function storeHandleFromPathname(pathname) {
+  const s = String(pathname || "");
+  const m = s.match(/\/store\/([^/]+)/);
+  return m ? m[1] : "";
+}
+
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
 
   const url = new URL(request.url);
+  const date = url.searchParams.get("date") || ymd(new Date());
 
-  // IMPORTANT: default date must be Europe/Athens, not server timezone
-  const date = url.searchParams.get("date") || ymdTz(new Date(), TZ);
-
-  // keep embedded params if present (helps avoid first-time auth weirdness)
+  // preserviamo shop/host (embedded) se presenti
   const shop = url.searchParams.get("shop") || "";
   const host = url.searchParams.get("host") || "";
 
@@ -189,11 +184,11 @@ export const loader = async ({ request }) => {
       cursor = e.cursor;
       const o = e.node;
 
-      // stop early (sorted by updatedAt desc) — compare in Athens TZ
+      // stop early: once orders updatedAt are older than the requested date
       const updatedAt = new Date(o.updatedAt);
       if (!Number.isNaN(updatedAt.getTime())) {
-        const updatedYmdAth = ymdTz(updatedAt, TZ);
-        if (updatedYmdAth && updatedYmdAth < date) {
+        const updatedYmd = ymd(updatedAt);
+        if (updatedYmd < date) {
           hasNext = false;
           break;
         }
@@ -205,7 +200,7 @@ export const loader = async ({ request }) => {
       const history = parseHistory(safeStr(o?.mfHistory?.value));
 
       // current
-      if (currentVoucher && isWithinDayTz(currentCreated, date, TZ)) {
+      if (currentVoucher && isWithinDay(currentCreated, date)) {
         rows.push({
           orderName: safeStr(o.name),
           orderId: safeStr(o.id),
@@ -221,7 +216,7 @@ export const loader = async ({ request }) => {
         const ca = safeStr(h?.createdAtIso);
         const pcs = safeStr(h?.pieces) || "1";
         if (!vn) continue;
-        if (!isWithinDayTz(ca, date, TZ)) continue;
+        if (!isWithinDay(ca, date)) continue;
 
         rows.push({
           orderName: safeStr(o.name),
@@ -246,7 +241,7 @@ export const action = async ({ request }) => {
   const form = await request.formData();
   const intent = safeStr(form.get("intent"));
   const voucherNumberRaw = safeStr(form.get("voucherNumber")).trim();
-  const date = safeStr(form.get("date")) || ymdTz(new Date(), TZ);
+  const date = safeStr(form.get("date")) || ymd(new Date());
 
   if (intent !== "cancel") {
     return { ok: false, message: "Unknown action.", date };
@@ -265,7 +260,11 @@ export const action = async ({ request }) => {
 
   if (!out.ok) {
     const extra = out.preview ? ` Preview: ${out.preview}` : "";
-    return { ok: false, message: `Cancel failed for ${voucherNumberRaw}: ${out.message}${extra}`, date };
+    return {
+      ok: false,
+      message: `Cancel failed for ${voucherNumberRaw}: ${out.message}${extra}`,
+      date,
+    };
   }
 
   if (!out.result) {
@@ -276,8 +275,6 @@ export const action = async ({ request }) => {
 };
 
 export default function VouchersPage() {
-  const app = useAppBridge();
-
   const { date, rows, shop, host } = useLoaderData();
   const actionData = useActionData();
   const nav = useNavigation();
@@ -285,43 +282,37 @@ export default function VouchersPage() {
   const [selectedDate, setSelectedDate] = useState(actionData?.date || date);
   const isSubmitting = nav.state === "submitting";
 
+  // Manteniamo shop/host per non finire su /auth/login
   const refreshHref = useMemo(() => {
-    const params = new URLSearchParams();
-    params.set("date", selectedDate);
-    if (shop) params.set("shop", shop);
-    if (host) params.set("host", host);
-    return `/app/vouchers?${params.toString()}`;
+    const u = new URL(`/app/vouchers`, window.location.origin);
+    u.searchParams.set("date", selectedDate);
+    if (shop) u.searchParams.set("shop", shop);
+    if (host) u.searchParams.set("host", host);
+    return u.pathname + u.search;
   }, [selectedDate, shop, host]);
 
-  const openOrder = useCallback(
-    (orderGid) => {
-      const numeric = orderNumericId(orderGid);
-      if (!numeric) {
-        alert("Cannot open order: missing numeric id.");
-        return;
-      }
+  const openOrder = useCallback((orderGid) => {
+    const numeric = orderNumericId(orderGid);
+    if (!numeric) {
+      alert("Cannot open order: missing numeric id.");
+      return;
+    }
 
-      try {
-        const redirect = Redirect.create(app);
-        redirect.dispatch(Redirect.Action.ADMIN_PATH, { path: `/orders/${numeric}` });
-      } catch (e) {
-        // fallback (should rarely happen)
-        alert(e?.message || "Cannot open order.");
-      }
-    },
-    [app]
-  );
+    const handle = storeHandleFromPathname(window.location.pathname);
+    if (!handle) {
+      alert("Cannot open order: missing store handle from URL.");
+      return;
+    }
+
+    const url = `https://admin.shopify.com/store/${handle}/orders/${numeric}`;
+
+    // apri nel contesto admin (no app-bridge dispatch)
+    window.open(url, "_top");
+  }, []);
 
   const printThisPage = useCallback(() => {
     window.print();
   }, []);
-
-  function formatCreated(iso) {
-    if (!iso) return "";
-    const dt = new Date(iso);
-    if (Number.isNaN(dt.getTime())) return iso;
-    return dt.toLocaleString("el-GR", { timeZone: TZ });
-  }
 
   return (
     <div
@@ -334,7 +325,7 @@ export default function VouchersPage() {
     >
       <h1 style={{ fontSize: 20, marginBottom: 6 }}>Daily labels</h1>
       <p style={{ marginTop: 0, color: "#666" }}>
-        Labels created on a specific day (based on Shopify metafields). Timezone: <b>{TZ}</b>
+        Labels created on a specific day (based on Shopify metafields).
       </p>
 
       {/* Banner */}
@@ -358,7 +349,15 @@ export default function VouchersPage() {
       )}
 
       {/* Controls */}
-      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 14 }}>
+      <div
+        style={{
+          display: "flex",
+          gap: 12,
+          alignItems: "center",
+          flexWrap: "wrap",
+          marginBottom: 14,
+        }}
+      >
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <label htmlFor="dateInput" style={{ fontSize: 13, color: "#333" }}>
             Date:
@@ -461,16 +460,14 @@ export default function VouchersPage() {
               <th style={{ padding: "10px 12px", fontSize: 12, color: "#555" }}>Order</th>
               <th style={{ padding: "10px 12px", fontSize: 12, color: "#555" }}>Voucher</th>
               <th style={{ padding: "10px 12px", fontSize: 12, color: "#555" }}>Pieces</th>
-              <th style={{ padding: "10px 12px", fontSize: 12, color: "#555" }}>Created ({TZ})</th>
+              <th style={{ padding: "10px 12px", fontSize: 12, color: "#555" }}>Created</th>
               <th style={{ padding: "10px 12px", fontSize: 12, color: "#555" }}>Actions</th>
             </tr>
           </thead>
-
           <tbody>
             {rows.map((r) => (
               <tr key={`${r.orderId}::${r.voucherNumber}`} style={{ borderTop: "1px solid #f0f0f0" }}>
                 <td style={{ padding: "10px 12px", fontSize: 13 }}>{r.orderName}</td>
-
                 <td
                   style={{
                     padding: "10px 12px",
@@ -480,13 +477,8 @@ export default function VouchersPage() {
                 >
                   {r.voucherNumber}
                 </td>
-
                 <td style={{ padding: "10px 12px", fontSize: 13 }}>{r.pieces || "1"}</td>
-
-                <td style={{ padding: "10px 12px", fontSize: 12, color: "#666" }}>
-                  {formatCreated(r.createdAtIso)}
-                </td>
-
+                <td style={{ padding: "10px 12px", fontSize: 12, color: "#666" }}>{r.createdAtIso || ""}</td>
                 <td style={{ padding: "10px 12px" }}>
                   <button
                     type="button"
