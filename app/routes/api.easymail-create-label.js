@@ -250,7 +250,7 @@ function makeLabelUrl(number) {
   return `/api/easymail-label-pdf?number=${encodeURIComponent(String(number))}`;
 }
 
-// COD helpers
+// Helpers
 function to2(n) {
   const x = Number(n);
   if (!Number.isFinite(x)) return 0;
@@ -321,26 +321,72 @@ export async function loader({ request }) {
       `${safeStr(customer.firstName)} ${safeStr(customer.lastName)}`.trim() ||
       "Customer";
 
-    // COD logic: if tag COD exists AND total > 0 => send CODValue = order total
+    // ✅ COD logic (manuale EasyMail: COD_Cash / COD_Cheques)
     const isCOD = (order.tags || []).includes("COD");
     const orderTotal = to2(order?.currentTotalPriceSet?.shopMoney?.amount);
-    const codValue = isCOD && orderTotal > 0 ? orderTotal : 0;
+    const codCash = isCOD && orderTotal > 0 ? orderTotal : 0;
 
+    // ⚠️ Campi Voucher allineati al manuale JSON/SOAP (ConsigneePhone1 ecc.)
     const insertPayload = {
       Voucher: {
         ShipmentNumber: 0,
         MasterShipmentNumber: null,
+        CustomerID: 0,
+
         ConsigneeName: fullName,
-        ConsigneeAddress: safeStr(ship.address1),
         ConsigneeCity: safeStr(ship.city),
         ConsigneeArea: safeStr(ship.province) || safeStr(ship.city),
         ConsigneePostalCode: safeStr(ship.zip),
-        ConsigneePhoneNumber1: safeStr(ship.phone) || safeStr(customer.phone) || "",
-        Piecies: Number(pieces),
-        Pieces: Number(pieces),
+        ConsigneeAddress: safeStr(ship.address1),
 
-        COD: codValue > 0 ? 1 : 0,
-        CODValue: codValue,
+        ConsigneePhone1: safeStr(ship.phone) || safeStr(customer.phone) || "",
+        ConsigneePhone2: null,
+        ConsigneePhone3: null,
+
+        ConsigneeEMail: safeStr(customer.email) || null,
+        ConsigneeVat: null,
+
+        ShipmentNotes: "",
+        Piecies: Number(pieces),
+        Weight: 2.0, // se vuoi possiamo calcolarlo, ma per ora lasciamo come nel tuo flow
+
+        Height: null,
+        Length: null,
+        Width: null,
+
+        Collected: false,
+
+        COD_Cash: codCash > 0 ? codCash : 0,
+        COD_Cheques: null,
+
+        Insurance: null,
+
+        DeliveryEarly: null,
+        DeliveryFromTime: null,
+        DeliveryToTime: null,
+        DeliverySunday: null,
+        DeliverySaturday: null,
+
+        CollectMoney: null,
+        PickUpProtocol: null,
+        PickUpDeclaration: null,
+        SubmitDocumentary: null,
+        ReturnDocumentary: null,
+        SameDay: null,
+        PreferredPicUpDate: null,
+        PickUpTimeFrom: null,
+        PickUpTimeTo: null,
+        CreateReturnNumber: null,
+        ReturnShipmentNumber: 0.0,
+        ReturnItemID: null,
+        DeliveryPoint: null,
+        IsReturnVoucher: null,
+        SenderName: null,
+        SenderCity: null,
+        SenderArea: null,
+        SenderPostalCode: null,
+        SenderAddress: null,
+        SenderPhone: null,
       },
       Credential: {
         UserName: process.env.EASYMAIL_USER,
@@ -361,13 +407,11 @@ export async function loader({ request }) {
       esmJson = JSON.parse(esmText);
     } catch {
       const preview = esmText.replace(/\s+/g, " ").slice(0, 300);
-      return cors(
-        jsonFAIL(`EasyMail InsertVoucher did not return JSON. Preview: ${preview}`, 200)
-      );
+      return cors(jsonFAIL(`EasyMail InsertVoucher did not return JSON. Preview: ${preview}`, 200));
     }
 
     if (!esmJson?.Result) {
-      const msg = esmJson?.Message || "EasyMail InsertVoucher error";
+      const msg = esmJson?.Message || (esmJson?.Messages?.join?.(" | ") ?? "") || "EasyMail InsertVoucher error";
       return cors(jsonFAIL(`EasyMail error: ${msg}`, 200));
     }
 
@@ -479,8 +523,7 @@ export async function loader({ request }) {
         labels,
         shipmentNumbers: numbersOrdered,
         message: `Label generated. Master: ${masterShipmentNumber} • Pieces: ${pieces} • Labels: ${numbersOrdered.length} • ${fulfMsg}${mfWarn ? " " + mfWarn : ""}`,
-        // extra debug (useful)
-        cod: { isCOD, orderTotal, codValue },
+        cod: { isCOD, orderTotal, codCash },
       })
     );
   } catch (e) {
