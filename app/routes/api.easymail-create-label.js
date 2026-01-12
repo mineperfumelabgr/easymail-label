@@ -257,6 +257,15 @@ function to2(n) {
   return Math.round(x * 100) / 100;
 }
 
+// ✅ Parse COD override from UI (?cod=1|0)
+function parseCodOverride(param) {
+  if (param === null || param === undefined || param === "") return null; // no override
+  const v = String(param).trim().toLowerCase();
+  if (v === "1" || v === "true" || v === "yes" || v === "on") return true;
+  if (v === "0" || v === "false" || v === "no" || v === "off") return false;
+  return null; // unknown => treat as no override
+}
+
 export async function loader({ request }) {
   try {
     const { admin } = await authenticate.admin(request);
@@ -267,6 +276,9 @@ export async function loader({ request }) {
 
     const forceNew = url.searchParams.get("forceNew") === "1";
     const pieces = clampPieces(url.searchParams.get("pieces") || "1");
+
+    // ✅ new: optional override from UI
+    const codOverride = parseCodOverride(url.searchParams.get("cod"));
 
     const order = await getOrder(admin, orderGid);
     if (!order) return cors(jsonFAIL("Order not found or access denied.", 200));
@@ -295,6 +307,11 @@ export async function loader({ request }) {
       const labels = uniq(nums).map((n) => ({ number: n, url: makeLabelUrl(n) }));
       const masterUrl = existingLabelUrl || makeLabelUrl(existingVoucher);
 
+      // Note: we don't generate anything here, so COD override doesn't apply.
+      // We still return the order COD autodetect info for UI convenience.
+      const autoIsCOD = (order.tags || []).includes("COD");
+      const orderTotal = to2(order?.currentTotalPriceSet?.shopMoney?.amount);
+
       return cors(
         jsonOK({
           exists: true,
@@ -305,6 +322,7 @@ export async function loader({ request }) {
           createdAtIso: existingCreatedAt || "",
           pieces: existingPieces || "1",
           message: "A label has already been generated for this order.",
+          cod: { isCOD: autoIsCOD, orderTotal },
         })
       );
     }
@@ -321,12 +339,13 @@ export async function loader({ request }) {
       `${safeStr(customer.firstName)} ${safeStr(customer.lastName)}`.trim() ||
       "Customer";
 
-    // ✅ COD logic (manuale EasyMail: COD_Cash / COD_Cheques)
-    const isCOD = (order.tags || []).includes("COD");
+    // ✅ COD logic: autodetect + UI override
+    const autoIsCOD = (order.tags || []).includes("COD");
+    const isCOD = codOverride === null ? autoIsCOD : codOverride;
+
     const orderTotal = to2(order?.currentTotalPriceSet?.shopMoney?.amount);
     const codCash = isCOD && orderTotal > 0 ? orderTotal : 0;
 
-    // ⚠️ Campi Voucher allineati al manuale JSON/SOAP (ConsigneePhone1 ecc.)
     const insertPayload = {
       Voucher: {
         ShipmentNumber: 0,
@@ -348,7 +367,7 @@ export async function loader({ request }) {
 
         ShipmentNotes: "",
         Piecies: Number(pieces),
-        Weight: 2.0, // se vuoi possiamo calcolarlo, ma per ora lasciamo come nel tuo flow
+        Weight: 2.0,
 
         Height: null,
         Length: null,
@@ -356,6 +375,7 @@ export async function loader({ request }) {
 
         Collected: false,
 
+        // ✅ this is what we control with UI
         COD_Cash: codCash > 0 ? codCash : 0,
         COD_Cheques: null,
 
@@ -411,7 +431,10 @@ export async function loader({ request }) {
     }
 
     if (!esmJson?.Result) {
-      const msg = esmJson?.Message || (esmJson?.Messages?.join?.(" | ") ?? "") || "EasyMail InsertVoucher error";
+      const msg =
+        esmJson?.Message ||
+        (esmJson?.Messages?.join?.(" | ") ?? "") ||
+        "EasyMail InsertVoucher error";
       return cors(jsonFAIL(`EasyMail error: ${msg}`, 200));
     }
 
@@ -523,7 +546,13 @@ export async function loader({ request }) {
         labels,
         shipmentNumbers: numbersOrdered,
         message: `Label generated. Master: ${masterShipmentNumber} • Pieces: ${pieces} • Labels: ${numbersOrdered.length} • ${fulfMsg}${mfWarn ? " " + mfWarn : ""}`,
-        cod: { isCOD, orderTotal, codCash },
+        cod: {
+          autoIsCOD,
+          isCOD,
+          override: codOverride, // null | true | false
+          orderTotal,
+          codCash,
+        },
       })
     );
   } catch (e) {
