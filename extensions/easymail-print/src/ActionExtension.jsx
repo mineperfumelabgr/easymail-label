@@ -1,5 +1,5 @@
 import { render } from "preact";
-import { useCallback, useState } from "preact/hooks";
+import { useCallback, useEffect, useState } from "preact/hooks";
 
 export default async () => {
   render(<Extension />, document.body);
@@ -11,6 +11,10 @@ function Extension() {
 
   const [isLoading, setIsLoading] = useState(false);
   const [pieces, setPieces] = useState("1");
+
+  // COD override (UI)
+  const [codEnabled, setCodEnabled] = useState(false);
+  const [codAutoHint, setCodAutoHint] = useState("");
 
   const [mode, setMode] = useState("idle"); // idle | exists | generated
   const [message, setMessage] = useState("");
@@ -65,6 +69,55 @@ function Extension() {
     return u.includes("?") ? `${u}&inline=1` : `${u}?inline=1`;
   }, []);
 
+  // Read checkbox value from Shopify web component events (various shapes)
+  const readChecked = useCallback((e) => {
+    const t = e?.target;
+    if (t && typeof t.checked === "boolean") return t.checked;
+    if (typeof e?.detail?.checked === "boolean") return e.detail.checked;
+    if (typeof e?.detail?.value === "boolean") return e.detail.value;
+    return Boolean(e?.detail?.value);
+  }, []);
+
+  // Best-effort COD auto-detect (does NOT create label)
+  // Uses your existing endpoint; if it doesn't provide COD info, we stay silent.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      if (!orderId) return;
+
+      try {
+        const url = `/api/easymail-label-status?orderId=${encodeURIComponent(orderId)}`;
+        const j = await fetchJson(url);
+
+        const tags = Array.isArray(j?.tags)
+          ? j.tags
+          : Array.isArray(j?.orderTags)
+          ? j.orderTags
+          : null;
+
+        const detected =
+          (typeof j?.isCOD === "boolean" ? j.isCOD : null) ??
+          (typeof j?.isCod === "boolean" ? j.isCod : null) ??
+          (typeof j?.cod === "boolean" ? j.cod : null) ??
+          (typeof j?.orderCod === "boolean" ? j.orderCod : null) ??
+          (tags ? tags.map(String).includes("COD") : null);
+
+        if (!cancelled && typeof detected === "boolean") {
+          setCodEnabled(detected);
+          setCodAutoHint(detected ? "Auto-detected: COD order" : "");
+        }
+      } catch {
+        // ignore (no COD auto info available)
+      }
+    }
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [orderId, fetchJson]);
+
   const runGenerate = useCallback(
     async ({ forceNew }) => {
       setIsLoading(true);
@@ -78,7 +131,8 @@ function Extension() {
 
         let url =
           `/api/easymail-create-label?orderId=${encodeURIComponent(orderId)}` +
-          `&pieces=${encodeURIComponent(pcs)}`;
+          `&pieces=${encodeURIComponent(pcs)}` +
+          `&cod=${encodeURIComponent(codEnabled ? "1" : "0")}`;
 
         if (forceNew) url += `&forceNew=1`;
 
@@ -108,7 +162,7 @@ function Extension() {
         setIsLoading(false);
       }
     },
-    [orderId, pieces, clampPieces, fetchJson, normalizeLabels]
+    [orderId, pieces, codEnabled, clampPieces, fetchJson, normalizeLabels]
   );
 
   const hidePrimaryGenerate = mode === "exists";
@@ -125,7 +179,7 @@ function Extension() {
         </s-button>
       )}
 
-      {/* Pieces selector */}
+      {/* Pieces selector (BIG / SAFE like original) */}
       <s-box paddingBlockStart="small">
         <s-banner tone="info">
           <s-text>Packages (pieces) — choose 1 to 5:</s-text>
@@ -157,17 +211,46 @@ function Extension() {
         </s-banner>
       </s-box>
 
+      {/* COD override (BIG / SAFE) */}
+      <s-box paddingBlockStart="small">
+        <s-banner tone="info">
+          <s-text>COD (Cash on Delivery):</s-text>
+
+          <s-box paddingBlockStart="small">
+            {/* IMPORTANT: use label= so text always appears */}
+            <s-checkbox
+              label="COD"
+              checked={codEnabled}
+              disabled={isLoading}
+              onChange={(e) => setCodEnabled(readChecked(e))}
+            />
+          </s-box>
+
+          {codAutoHint ? (
+            <s-box paddingBlockStart="xsmall">
+              <s-text tone="subdued">{codAutoHint}</s-text>
+            </s-box>
+          ) : null}
+
+          <s-box paddingBlockStart="xsmall">
+            <s-text tone="subdued">
+              Tip: you can toggle this to force COD on/off for this label generation.
+            </s-text>
+          </s-box>
+        </s-banner>
+      </s-box>
+
       {/* Exists */}
       {mode === "exists" && (
         <s-box paddingBlockStart="small">
           <s-banner tone="warning">
             <s-text>{message}</s-text>
 
-            {voucherNumber && (
+            {voucherNumber ? (
               <s-box paddingBlockStart="xsmall">
                 <s-text>Voucher: {voucherNumber}</s-text>
               </s-box>
-            )}
+            ) : null}
 
             <s-box paddingBlockStart="small">
               <s-inline-stack gap="base">
@@ -194,6 +277,7 @@ function Extension() {
                   </s-button>
                 )}
 
+                {/* Uses CURRENT UI values (pieces + COD) */}
                 <s-button onClick={() => runGenerate({ forceNew: true })} disabled={isLoading}>
                   Generate new label (keep old)
                 </s-button>
@@ -209,11 +293,11 @@ function Extension() {
           <s-banner tone="success">
             <s-text>{message}</s-text>
 
-            {voucherNumber && (
+            {voucherNumber ? (
               <s-box paddingBlockStart="xsmall">
                 <s-text>Voucher: {voucherNumber}</s-text>
               </s-box>
-            )}
+            ) : null}
 
             <s-box paddingBlockStart="small">
               {labels.length > 1 ? (
