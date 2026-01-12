@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useLoaderData, useNavigation } from "react-router";
+import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 import { authenticate } from "../shopify.server";
 
 const NS = "easymail";
@@ -9,6 +9,10 @@ const KEY_PIECES = "pieces";
 const KEY_HISTORY = "voucher_history";
 
 const ATHENS_TZ = "Europe/Athens";
+
+// Live JSON CancelVoucher (tuo live: JSON2)
+const ESM_CANCEL_VOUCHER =
+  "https://webservices.easy-mail.gr/WcfServiceJSON2/Service1.svc/CancelVoucher";
 
 // Build YYYY-MM-DD in a specific timezone
 function ymdInTz(date, timeZone = ATHENS_TZ) {
@@ -42,7 +46,6 @@ function formatAthens(iso) {
   }).formatToParts(d);
 
   const get = (type) => parts.find((p) => p.type === type)?.value || "";
-  // en-GB gives DD/MM/YYYY parts; we rebuild stable format
   return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}`;
 }
 
@@ -84,6 +87,70 @@ async function adminGraphql(admin, query, variables) {
     throw new Error(j.errors.map((e) => e.message).join(" | "));
   }
   return j;
+}
+
+function pickMessage(j) {
+  if (!j) return "";
+  if (typeof j.Message === "string" && j.Message.trim()) return j.Message.trim();
+  if (Array.isArray(j.Messages) && j.Messages.length) return j.Messages.filter(Boolean).join(" | ");
+  return "";
+}
+
+// Cancel server-side (no cookie/iframe issues)
+async function callCancelEasyMail(number) {
+  if (!process.env.EASYMAIL_USER || !process.env.EASYMAIL_PASSWORD) {
+    return { ok: false, message: "Missing EASYMAIL_USER / EASYMAIL_PASSWORD in .env" };
+  }
+
+  const payloads = [
+    {
+      Number: Number(number),
+      Credential: { UserName: process.env.EASYMAIL_USER, Password: process.env.EASYMAIL_PASSWORD },
+    },
+    {
+      ShipmentNumber: Number(number),
+      Credential: { UserName: process.env.EASYMAIL_USER, Password: process.env.EASYMAIL_PASSWORD },
+    },
+    {
+      Voucher: { ShipmentNumber: Number(number) },
+      Credential: { UserName: process.env.EASYMAIL_USER, Password: process.env.EASYMAIL_PASSWORD },
+    },
+  ];
+
+  let lastPreview = "";
+  for (const bodyObj of payloads) {
+    const resp = await fetch(ESM_CANCEL_VOUCHER, {
+      method: "POST",
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+      body: JSON.stringify(bodyObj),
+    });
+
+    const txt = await resp.text();
+    lastPreview = (txt || "").slice(0, 400);
+
+    let j;
+    try {
+      j = JSON.parse(txt);
+    } catch {
+      continue;
+    }
+
+    if (typeof j?.Result === "boolean") {
+      return {
+        ok: true,
+        result: j.Result,
+        canceled: Boolean(j.Canceled),
+        message: pickMessage(j) || (j.Result ? "OK" : "Cancel failed"),
+        raw: j,
+      };
+    }
+  }
+
+  return {
+    ok: false,
+    message: "EasyMail CancelVoucher did not return a valid JSON response (or unknown payload format).",
+    preview: lastPreview,
+  };
 }
 
 export const loader = async ({ request }) => {
@@ -176,19 +243,54 @@ export const loader = async ({ request }) => {
   }
 
   const deduped = uniqRows(rows);
-
-  // Sort by createdAtIso desc (string compare ok for ISO)
   deduped.sort((a, b) => (b.createdAtIso || "").localeCompare(a.createdAtIso || ""));
 
   return { date, rows: deduped };
 };
 
+export const action = async ({ request }) => {
+  await authenticate.admin(request);
+
+  const form = await request.formData();
+  const intent = safeStr(form.get("intent"));
+  const voucherNumberRaw = safeStr(form.get("voucherNumber")).trim();
+  const date = safeStr(form.get("date")) || ymdInTz(new Date(), ATHENS_TZ);
+
+  if (intent !== "cancel") {
+    return { ok: false, message: "Unknown action.", date };
+  }
+
+  if (!voucherNumberRaw) {
+    return { ok: false, message: "Please enter a voucher number.", date };
+  }
+
+  const num = Number(voucherNumberRaw);
+  if (!Number.isFinite(num) || num <= 0) {
+    return { ok: false, message: "Invalid voucher number.", date };
+  }
+
+  const out = await callCancelEasyMail(num);
+
+  if (!out.ok) {
+    const extra = out.preview ? ` Preview: ${out.preview}` : "";
+    return { ok: false, message: `Cancel failed for ${voucherNumberRaw}: ${out.message}${extra}`, date };
+  }
+
+  if (!out.result) {
+    return { ok: false, message: `Cancel failed for ${voucherNumberRaw}: ${out.message}`, date };
+  }
+
+  return { ok: true, message: `Voucher ${voucherNumberRaw} cancelled successfully.`, date };
+};
+
 export default function VouchersPage() {
   const { date, rows } = useLoaderData();
+  const actionData = useActionData();
   const nav = useNavigation();
 
-  const [selectedDate, setSelectedDate] = useState(date);
+  const [selectedDate, setSelectedDate] = useState(actionData?.date || date);
   const isLoading = nav.state !== "idle";
+  const isSubmitting = nav.state === "submitting";
 
   const reloadToDate = (nextDate) => {
     const u = new URL(window.location.href);
@@ -214,6 +316,23 @@ export default function VouchersPage() {
         Times are shown in <b>Europe/Athens</b>.
       </p>
 
+      {/* Status banner */}
+      {actionData?.message && (
+        <div
+          style={{
+            marginBottom: 12,
+            padding: 12,
+            borderRadius: 12,
+            border: "1px solid",
+            borderColor: actionData.ok ? "#b7eb8f" : "#ffa39e",
+            background: actionData.ok ? "#f6ffed" : "#fff1f0",
+            color: "#111",
+          }}
+        >
+          {actionData.message}
+        </div>
+      )}
+
       <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 14, flexWrap: "wrap" }}>
         <label htmlFor="dateInput" style={{ fontSize: 13, color: "#333" }}>
           Date:
@@ -225,7 +344,6 @@ export default function VouchersPage() {
           onChange={(e) => {
             const next = e.target.value;
             setSelectedDate(next);
-            // auto reload (no button)
             if (next) reloadToDate(next);
           }}
           style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid #ddd" }}
@@ -233,6 +351,45 @@ export default function VouchersPage() {
         {isLoading && <span style={{ fontSize: 12, color: "#666" }}>Loading…</span>}
       </div>
 
+      {/* ✅ Cancel voucher (manual) */}
+      <div style={{ marginBottom: 16, border: "1px solid #eee", borderRadius: 14, padding: 12, background: "#fff" }}>
+        <Form method="post" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <input type="hidden" name="intent" value="cancel" />
+          <input type="hidden" name="date" value={selectedDate} />
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ fontSize: 13, color: "#333" }}>Cancel voucher (manual):</div>
+            <input
+              name="voucherNumber"
+              placeholder="e.g. 53708701893"
+              style={{ padding: "10px 12px", borderRadius: 12, border: "1px solid #ddd", minWidth: 240 }}
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            style={{
+              padding: "10px 14px",
+              borderRadius: 12,
+              border: "1px solid #ddd",
+              background: isSubmitting ? "#f5f5f5" : "#111",
+              color: isSubmitting ? "#999" : "#fff",
+              cursor: isSubmitting ? "default" : "pointer",
+              fontSize: 14,
+              marginTop: 18,
+            }}
+          >
+            {isSubmitting ? "..." : "Cancel"}
+          </button>
+
+          <div style={{ fontSize: 12, color: "#666", marginTop: 18 }}>
+            Note: cancellation is possible only if the shipment has not been processed by the courier.
+          </div>
+        </Form>
+      </div>
+
+      {/* Table */}
       <div style={{ border: "1px solid #eee", borderRadius: 14, overflow: "hidden", background: "#fff" }}>
         <div style={{ padding: "10px 12px", borderBottom: "1px solid #eee", fontSize: 13, color: "#555" }}>
           Total: <b>{rows.length}</b>
