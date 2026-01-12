@@ -19,19 +19,6 @@ function Extension() {
   const [voucherNumber, setVoucherNumber] = useState("");
   const [labelUrl, setLabelUrl] = useState("");
   const [labels, setLabels] = useState([]); // [{ number, url }]
-  const [cancelNumber, setCancelNumber] = useState("");
-
-  const todayStr = useMemo(() => {
-    const d = new Date();
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const dd = String(d.getDate()).padStart(2, "0");
-    return `${yyyy}-${mm}-${dd}`;
-  }, []);
-
-  const csvHref = useMemo(() => {
-    return `/api/easymail-vouchers-csv?date=${encodeURIComponent(todayStr)}`;
-  }, [todayStr]);
 
   const clampPieces = useCallback((val) => {
     const n = Number(val);
@@ -175,11 +162,12 @@ function Extension() {
         <s-box paddingBlockStart="small">
           <s-banner tone="warning">
             <s-text>{message}</s-text>
-{voucherNumber ? (
-  <s-box paddingBlockStart="xsmall">
-    <s-text>Voucher: {voucherNumber}</s-text>
-  </s-box>
-) : null}
+
+            {voucherNumber && (
+              <s-box paddingBlockStart="xsmall">
+                <s-text>Voucher: {voucherNumber}</s-text>
+              </s-box>
+            )}
 
             <s-box paddingBlockStart="small">
               <s-inline-stack gap="base">
@@ -221,11 +209,11 @@ function Extension() {
           <s-banner tone="success">
             <s-text>{message}</s-text>
 
-{voucherNumber ? (
-  <s-box paddingBlockStart="xsmall">
-    <s-text>Voucher: {voucherNumber}</s-text>
-  </s-box>
-) : null}
+            {voucherNumber && (
+              <s-box paddingBlockStart="xsmall">
+                <s-text>Voucher: {voucherNumber}</s-text>
+              </s-box>
+            )}
 
             <s-box paddingBlockStart="small">
               {labels.length > 1 ? (
@@ -256,88 +244,6 @@ function Extension() {
           </s-banner>
         </s-box>
       )}
-
-      {/* Cancel voucher (manual) */}
-      <s-box paddingBlockStart="small">
-        <s-banner tone="warning">
-          <s-text>Cancel voucher (manual):</s-text>
-
-          <s-box paddingBlockStart="small">
-            <s-text-field
-              value={cancelNumber}
-              onInput={(e) => setCancelNumber(e.target.value)}
-              placeholder="Enter voucher number (ShipmentNumber)"
-            />
-          </s-box>
-
-          <s-box paddingBlockStart="small">
-            <s-inline-stack gap="base">
-              <s-button
-                disabled={isLoading || !String(cancelNumber).trim()}
-                onClick={async () => {
-                  setIsLoading(true);
-                  setErrorMessage("");
-                  setMessage("");
-
-                  try {
-                    const n = String(cancelNumber).trim();
-                    const url = `/api/easymail-cancel-voucher?number=${encodeURIComponent(n)}`;
-
-                    // usa la tua helper fetchJson (già presente nel file)
-                    const j = await fetchJson(url);
-
-                    // j.success già true, quindi guardiamo result/canceled
-if (j.result && (j.canceled === true || j.canceled === "true")) {
-  setMessage(`✅ Voucher ${n} successfully canceled.`);
-  setCancelNumber("");
-} else {
-  throw new Error(j.message || `Cancel failed for voucher: ${n}`);
-}
-
-                  } catch (e) {
-                    setErrorMessage(e?.message || "Cancel error.");
-                  } finally {
-                    setIsLoading(false);
-                  }
-                }}
-              >
-                Cancel now
-              </s-button>
-
-              <s-button
-                disabled={isLoading}
-                onClick={() => {
-                  setCancelNumber("");
-                  setErrorMessage("");
-                  setMessage("");
-                }}
-              >
-                Clear
-              </s-button>
-            </s-inline-stack>
-          </s-box>
-
-          <s-box paddingBlockStart="xsmall">
-            <s-text>
-              Note: cancellation is possible only if the shipment has not been processed by the courier.
-            </s-text>
-          </s-box>
-        </s-banner>
-      </s-box>
-
-
-      {/* CSV */}
-      <s-box paddingBlockStart="small">
-        <s-banner tone="info">
-          <s-text>Daily export:</s-text>
-          <s-box paddingBlockStart="small">
-            <s-button href={csvHref} disabled={isLoading}>
-              Download today’s CSV
-            </s-button>
-          </s-box>
-        </s-banner>
-      </s-box>
-
 
       {/* Errors */}
       {errorMessage && (
