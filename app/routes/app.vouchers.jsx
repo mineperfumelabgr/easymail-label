@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 import { authenticate } from "../shopify.server";
 
@@ -176,6 +176,7 @@ export const loader = async ({ request }) => {
               id
               name
               updatedAt
+              tags
               mfVoucher: metafield(namespace: "${NS}", key: "${KEY_VOUCHER}") { value }
               mfCreated: metafield(namespace: "${NS}", key: "${KEY_CREATED_AT}") { value }
               mfPieces: metafield(namespace: "${NS}", key: "${KEY_PIECES}") { value }
@@ -207,6 +208,9 @@ export const loader = async ({ request }) => {
         }
       }
 
+      const tags = Array.isArray(o?.tags) ? o.tags : [];
+      const hasCod = tags.some((t) => String(t || "").trim().toUpperCase() === "COD");
+
       const currentVoucher = safeStr(o?.mfVoucher?.value);
       const currentCreated = safeStr(o?.mfCreated?.value);
       const currentPieces = safeStr(o?.mfPieces?.value) || "1";
@@ -220,6 +224,7 @@ export const loader = async ({ request }) => {
           voucherNumber: currentVoucher,
           createdAtIso: currentCreated,
           pieces: currentPieces,
+          hasCod,
         });
       }
 
@@ -237,6 +242,7 @@ export const loader = async ({ request }) => {
           voucherNumber: vn,
           createdAtIso: ca,
           pieces: pcs,
+          hasCod,
         });
       }
     }
@@ -289,8 +295,17 @@ export default function VouchersPage() {
   const nav = useNavigation();
 
   const [selectedDate, setSelectedDate] = useState(actionData?.date || date);
+  const [cancelNumber, setCancelNumber] = useState("");
+
   const isLoading = nav.state !== "idle";
   const isSubmitting = nav.state === "submitting";
+
+  // ✅ dopo submit (success o error) svuotiamo il campo, così puoi cancellarne un altro subito
+  useEffect(() => {
+    if (actionData?.message) {
+      setCancelNumber("");
+    }
+  }, [actionData?.message]);
 
   const reloadToDate = (nextDate) => {
     const u = new URL(window.location.href);
@@ -361,6 +376,8 @@ export default function VouchersPage() {
             <div style={{ fontSize: 13, color: "#333" }}>Cancel voucher (manual):</div>
             <input
               name="voucherNumber"
+              value={cancelNumber}
+              onChange={(e) => setCancelNumber(e.target.value)}
               placeholder="e.g. 53708701893"
               style={{ padding: "10px 12px", borderRadius: 12, border: "1px solid #ddd", minWidth: 240 }}
             />
@@ -383,6 +400,23 @@ export default function VouchersPage() {
             {isSubmitting ? "..." : "Cancel"}
           </button>
 
+          {/* ✅ Clear (reset campo) */}
+          <button
+            type="button"
+            onClick={() => setCancelNumber("")}
+            style={{
+              padding: "10px 14px",
+              borderRadius: 12,
+              border: "1px solid #ddd",
+              background: "#fff",
+              cursor: "pointer",
+              fontSize: 14,
+              marginTop: 18,
+            }}
+          >
+            Clear
+          </button>
+
           <div style={{ fontSize: 12, color: "#666", marginTop: 18 }}>
             Note: cancellation is possible only if the shipment has not been processed by the courier.
           </div>
@@ -402,6 +436,7 @@ export default function VouchersPage() {
               <th style={{ padding: "10px 12px", fontSize: 12, color: "#555" }}>Voucher</th>
               <th style={{ padding: "10px 12px", fontSize: 12, color: "#555" }}>Pieces</th>
               <th style={{ padding: "10px 12px", fontSize: 12, color: "#555" }}>Created (Athens)</th>
+              <th style={{ padding: "10px 12px", fontSize: 12, color: "#555" }}>COD</th>
             </tr>
           </thead>
           <tbody>
@@ -421,12 +456,30 @@ export default function VouchersPage() {
                 <td style={{ padding: "10px 12px", fontSize: 12, color: "#666" }}>
                   {formatAthens(r.createdAtIso)}
                 </td>
+                <td style={{ padding: "10px 12px", fontSize: 12 }}>
+                  {r.hasCod ? (
+                    <span
+                      style={{
+                        display: "inline-block",
+                        padding: "4px 8px",
+                        borderRadius: 999,
+                        border: "1px solid #ddd",
+                        background: "#fff",
+                        fontWeight: 600,
+                      }}
+                    >
+                      COD
+                    </span>
+                  ) : (
+                    ""
+                  )}
+                </td>
               </tr>
             ))}
 
             {!rows.length && (
               <tr>
-                <td colSpan={4} style={{ padding: 18, fontSize: 13, color: "#777" }}>
+                <td colSpan={5} style={{ padding: 18, fontSize: 13, color: "#777" }}>
                   No labels found for this day.
                 </td>
               </tr>
