@@ -1,5 +1,5 @@
 import { render } from "preact";
-import { useCallback, useMemo, useState } from "preact/hooks";
+import { useCallback, useState } from "preact/hooks";
 
 export default async () => {
   render(<Extension />, document.body);
