@@ -1,11 +1,12 @@
 import { authenticate } from "../shopify.server";
 
 const NS = "easymail";
-const KEY_VOUCHER = "voucher_number";      // master
-const KEY_LABEL_URL = "label_url";         // master pdf url
+
+const KEY_VOUCHER = "voucher_number"; // master
+const KEY_LABEL_URL = "label_url"; // master pdf url
 const KEY_CREATED_AT = "created_at";
 const KEY_PIECES = "pieces";
-const KEY_HISTORY = "voucher_history";     // JSON array, max 20
+const KEY_HISTORY = "voucher_history"; // JSON array, max 20
 const KEY_CURRENT_NUMBERS = "current_numbers"; // JSON array of current shipment numbers (master + children)
 
 const ESM_INSERT_VOUCHER =
@@ -75,6 +76,9 @@ async function getOrder(admin, orderGid) {
         id
         name
         tags
+
+        currentTotalPriceSet { shopMoney { amount currencyCode } }
+
         shippingAddress {
           name
           address1
@@ -89,16 +93,10 @@ async function getOrder(admin, orderGid) {
           phone
           email
         }
-
         fulfillments(first: 10) {
           id
-          trackingInfo {
-            company
-            number
-            url
-          }
+          trackingInfo { company number url }
         }
-
         fulfillmentOrders(first: 10) {
           edges {
             node {
@@ -115,7 +113,6 @@ async function getOrder(admin, orderGid) {
             }
           }
         }
-
         metafields(first: 60, namespace: "${NS}") {
           edges { node { key value } }
         }
@@ -150,7 +147,6 @@ async function setMetafields(admin, ownerId, items) {
       }
     }
   `;
-
   const variables = {
     metafields: items.map((it) => ({
       ownerId,
@@ -160,7 +156,6 @@ async function setMetafields(admin, ownerId, items) {
       value: it.value,
     })),
   };
-
   const j = await adminGraphql(admin, m, variables);
   return j?.data?.metafieldsSet?.userErrors || [];
 }
@@ -177,7 +172,11 @@ function getExistingTrackingNumbers(order) {
 
 async function updateTrackingOnExistingFulfillment(admin, fulfillmentId, trackingNumbers) {
   const mutation = `#graphql
-    mutation UpdateTracking($fulfillmentId: ID!, $trackingInfoInput: FulfillmentTrackingInput!, $notifyCustomer: Boolean) {
+    mutation UpdateTracking(
+      $fulfillmentId: ID!,
+      $trackingInfoInput: FulfillmentTrackingInput!,
+      $notifyCustomer: Boolean
+    ) {
       fulfillmentTrackingInfoUpdateV2(
         fulfillmentId: $fulfillmentId
         trackingInfoInput: $trackingInfoInput
@@ -188,7 +187,6 @@ async function updateTrackingOnExistingFulfillment(admin, fulfillmentId, trackin
       }
     }
   `;
-
   const variables = {
     fulfillmentId,
     notifyCustomer: false,
@@ -197,7 +195,6 @@ async function updateTrackingOnExistingFulfillment(admin, fulfillmentId, trackin
       numbers: trackingNumbers,
     },
   };
-
   const j = await adminGraphql(admin, mutation, variables);
   return j?.data?.fulfillmentTrackingInfoUpdateV2?.userErrors || [];
 }
@@ -211,7 +208,6 @@ async function createFulfillment(admin, fulfillmentOrderId, lineItems, trackingN
       }
     }
   `;
-
   const variables = {
     fulfillment: {
       lineItemsByFulfillmentOrder: [
@@ -230,7 +226,6 @@ async function createFulfillment(admin, fulfillmentOrderId, lineItems, trackingN
       },
     },
   };
-
   const j = await adminGraphql(admin, mutation, variables);
   return {
     errs: j?.data?.fulfillmentCreateV2?.userErrors || [],
@@ -253,6 +248,13 @@ function extractAllShipmentNumbers(esmJson) {
 
 function makeLabelUrl(number) {
   return `/api/easymail-label-pdf?number=${encodeURIComponent(String(number))}`;
+}
+
+// COD helpers
+function to2(n) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return 0;
+  return Math.round(x * 100) / 100;
 }
 
 export async function loader({ request }) {
@@ -284,12 +286,10 @@ export async function loader({ request }) {
         try {
           const parsed = JSON.parse(existingCurrentNumbersRaw);
           if (Array.isArray(parsed)) nums = parsed.map(String);
+        } catch {
           // ignore
-}
-catch {
-  // ignore
+        }
       }
- }
       if (!nums.length) nums = [String(existingVoucher)];
 
       const labels = uniq(nums).map((n) => ({ number: n, url: makeLabelUrl(n) }));
@@ -321,7 +321,10 @@ catch {
       `${safeStr(customer.firstName)} ${safeStr(customer.lastName)}`.trim() ||
       "Customer";
 
+    // COD logic: if tag COD exists AND total > 0 => send CODValue = order total
     const isCOD = (order.tags || []).includes("COD");
+    const orderTotal = to2(order?.currentTotalPriceSet?.shopMoney?.amount);
+    const codValue = isCOD && orderTotal > 0 ? orderTotal : 0;
 
     const insertPayload = {
       Voucher: {
@@ -333,12 +336,11 @@ catch {
         ConsigneeArea: safeStr(ship.province) || safeStr(ship.city),
         ConsigneePostalCode: safeStr(ship.zip),
         ConsigneePhoneNumber1: safeStr(ship.phone) || safeStr(customer.phone) || "",
-
         Piecies: Number(pieces),
         Pieces: Number(pieces),
 
-        COD: isCOD ? 1 : 0,
-        CODValue: 0,
+        COD: codValue > 0 ? 1 : 0,
+        CODValue: codValue,
       },
       Credential: {
         UserName: process.env.EASYMAIL_USER,
@@ -353,12 +355,15 @@ catch {
     });
 
     const esmText = await esmResp.text();
-let esmJson;
+    let esmJson;
+
     try {
       esmJson = JSON.parse(esmText);
     } catch {
       const preview = esmText.replace(/\s+/g, " ").slice(0, 300);
-      return cors(jsonFAIL(`EasyMail InsertVoucher did not return JSON. Preview: ${preview}`, 200));
+      return cors(
+        jsonFAIL(`EasyMail InsertVoucher did not return JSON. Preview: ${preview}`, 200)
+      );
     }
 
     if (!esmJson?.Result) {
@@ -382,10 +387,9 @@ let esmJson;
       try {
         const parsed = JSON.parse(historyRaw);
         if (Array.isArray(parsed)) history = parsed;
-    }   catch {
-  // ignore
-}
-
+      } catch {
+        // ignore
+      }
     }
 
     if (existingVoucher && existingVoucher !== String(masterShipmentNumber)) {
@@ -458,7 +462,7 @@ let esmJson;
     }
 
     const mfWarn = mfErrors.length
-      ? ` Metafields warnings: ${mfErrors.map((e) => e.message).join(" | ")}`
+      ? `Metafields warnings: ${mfErrors.map((e) => e.message).join(" | ")}`
       : "";
 
     const fulfMsg = fulfillmentWarning
@@ -474,7 +478,9 @@ let esmJson;
         labelUrl: masterLabelUrl,
         labels,
         shipmentNumbers: numbersOrdered,
-        message: `Label generated. Master: ${masterShipmentNumber} • Pieces: ${pieces} • Labels: ${numbersOrdered.length} • ${fulfMsg}${mfWarn}`,
+        message: `Label generated. Master: ${masterShipmentNumber} • Pieces: ${pieces} • Labels: ${numbersOrdered.length} • ${fulfMsg}${mfWarn ? " " + mfWarn : ""}`,
+        // extra debug (useful)
+        cod: { isCOD, orderTotal, codValue },
       })
     );
   } catch (e) {
