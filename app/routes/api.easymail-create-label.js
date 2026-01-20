@@ -221,7 +221,7 @@ async function createFulfillment(admin, fulfillmentOrderId, lineItems, trackingN
           })),
         },
       ],
-      notifyCustomer: false,
+      notifyCustomer: true,
 trackingInfo: {
   company: "EasyMail",
   numbers: trackingNumbers,
