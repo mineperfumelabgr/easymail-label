@@ -190,10 +190,12 @@ async function updateTrackingOnExistingFulfillment(admin, fulfillmentId, trackin
   const variables = {
     fulfillmentId,
     notifyCustomer: false,
-    trackingInfoInput: {
-      company: "EasyMail",
-      numbers: trackingNumbers,
-    },
+trackingInfoInput: {
+  company: "EasyMail",
+  numbers: trackingNumbers,
+  urls: trackingNumbers.map(makeTrackingUrl),
+},
+
   };
   const j = await adminGraphql(admin, mutation, variables);
   return j?.data?.fulfillmentTrackingInfoUpdateV2?.userErrors || [];
@@ -220,10 +222,12 @@ async function createFulfillment(admin, fulfillmentOrderId, lineItems, trackingN
         },
       ],
       notifyCustomer: false,
-      trackingInfo: {
-        company: "EasyMail",
-        numbers: trackingNumbers,
-      },
+trackingInfo: {
+  company: "EasyMail",
+  numbers: trackingNumbers,
+  urls: trackingNumbers.map(makeTrackingUrl),
+},
+
     },
   };
   const j = await adminGraphql(admin, mutation, variables);
@@ -249,6 +253,12 @@ function extractAllShipmentNumbers(esmJson) {
 function makeLabelUrl(number) {
   return `/api/easymail-label-pdf?number=${encodeURIComponent(String(number))}`;
 }
+
+function makeTrackingUrl(number) {
+  const n = encodeURIComponent(String(number));
+  return `https://www.easymail.gr/index.php/web-tracking?${n}`;
+}
+
 
 // Helpers
 function to2(n) {
