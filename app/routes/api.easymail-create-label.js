@@ -375,7 +375,7 @@ export async function loader({ request }) {
         ConsigneeEMail: safeStr(customer.email) || null,
         ConsigneeVat: null,
 
-        ShipmentNotes: "",
+        ShipmentNotes: `Order ${order.name}`,
         Piecies: Number(pieces),
         Weight: 2.0,
 
