@@ -1,0 +1,267 @@
+const ACS_ROOT =
+  "https://webservices.acscourier.net/ACSRestServices/api/ACSAutoRest";
+
+function safeStr(v) {
+  return String(v ?? "").trim();
+}
+
+function getCreds() {
+  const creds = {
+    Company_ID: process.env.ACS_COMPANY_ID,
+    Company_Password: process.env.ACS_COMPANY_PASSWORD,
+    User_ID: process.env.ACS_USER_ID,
+    User_Password: process.env.ACS_USER_PASSWORD,
+  };
+
+  const missing = Object.entries(creds)
+    .filter(([, v]) => !v)
+    .map(([k]) => k);
+
+  if (!process.env.ACS_API_KEY) missing.push("ACS_API_KEY");
+
+  if (missing.length) {
+    throw new Error(`Missing ACS env vars: ${missing.join(", ")}`);
+  }
+
+  return creds;
+}
+
+export function splitStreetAndNumber(address1 = "") {
+  const raw = safeStr(address1);
+  if (!raw) {
+    return { street: "", number: 1 };
+  }
+
+  const match = raw.match(/^(.*?)[,\s]+(\d+[A-Za-zΑ-Ωα-ω\-\/]*)$/u);
+  if (!match) {
+    return { street: raw, number: 1 };
+  }
+
+  const street = safeStr(match[1]) || raw;
+  const tail = safeStr(match[2]);
+  const onlyDigits = tail.replace(/[^\d]/g, "");
+  const number = onlyDigits ? Number(onlyDigits) : 1;
+
+  return { street, number: Number.isFinite(number) && number > 0 ? number : 1 };
+}
+
+export async function acsCall(alias, ACSInputParameters = {}) {
+  const res = await fetch(ACS_ROOT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      ACSApiKey: process.env.ACS_API_KEY,
+    },
+    body: JSON.stringify({
+      ACSAlias: alias,
+      ACSInputParameters,
+    }),
+  });
+
+  const text = await res.text();
+
+  if (!res.ok) {
+    throw new Error(`ACS HTTP error ${res.status}: ${text.slice(0, 300)}`);
+  }
+
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(`ACS did not return JSON. Preview: ${text.slice(0, 300)}`);
+  }
+
+  if (data?.ACSExecution_HasError) {
+    throw new Error(data?.ACSExecutionErrorMessage || `ACS ${alias} failed.`);
+  }
+
+  return data;
+}
+
+export function getAcsEnvelope(data) {
+  return data?.ACSOutputResponce || data?.ACSOutputResponse || {};
+}
+
+export function getAcsValueOutput(data) {
+  const env = getAcsEnvelope(data);
+  return Array.isArray(env?.ACSValueOutput) ? env.ACSValueOutput : [];
+}
+
+export function getAcsTableRows(data) {
+  const env = getAcsEnvelope(data);
+  return Array.isArray(env?.ACSTableOutput?.Table_Data)
+    ? env.ACSTableOutput.Table_Data
+    : [];
+}
+
+export async function createAcsVoucher(params) {
+  return acsCall("ACS_Create_Voucher", {
+    ...getCreds(),
+    ...params,
+  });
+}
+
+export async function getAcsMultipartVouchers(mainVoucherNo) {
+  return acsCall("ACS_Get_Multipart_Vouchers", {
+    ...getCreds(),
+    Language: "GR",
+    Main_Voucher_No: Number(mainVoucherNo),
+  });
+}
+
+export async function printAcsVoucher(voucherNo, { printType = 2, startPosition = 1 } = {}) {
+  return acsCall("ACS_Print_Voucher", {
+    ...getCreds(),
+    Language: "GR",
+    Voucher_No: String(voucherNo),
+    Print_Type: Number(printType),
+    Start_Position: Number(startPosition),
+  });
+}
+
+export async function deleteAcsVoucher(voucherNo) {
+  return acsCall("ACS_Delete_Voucher", {
+    ...getCreds(),
+    Language: "GR",
+    Voucher_No: String(voucherNo),
+  });
+}
+
+export async function issueAcsPickupList(pickupDate) {
+  return acsCall("ACS_Issue_Pickup_List", {
+    ...getCreds(),
+    Language: "GR",
+    Pickup_Date: String(pickupDate),
+    MyData: null,
+  });
+}
+
+export async function getAcsPickupLists(pickupDate) {
+  return acsCall("ACS_Get_Pickup_Lists", {
+    ...getCreds(),
+    Language: "GR",
+    Pickup_Date: String(pickupDate),
+  });
+}
+
+export async function printAcsPickupList(massNumber, pickupDate) {
+  return acsCall("ACS_Print_Pickup_List", {
+    ...getCreds(),
+    Language: "GR",
+    Mass_Number: Number(massNumber),
+    Pickup_Date: String(pickupDate),
+  });
+}
+
+export function extractAcsVoucherNo(data) {
+  const row = getAcsValueOutput(data)[0] || {};
+  return safeStr(row?.Voucher_No);
+}
+
+export function extractAcsMultipartNumbers(data) {
+  return getAcsTableRows(data)
+    .map((r) => safeStr(r?.MultiPart_Voucher_No))
+    .filter(Boolean);
+}
+
+export function extractIssuePickupListResult(data) {
+  const row = getAcsValueOutput(data)[0] || {};
+  return {
+    pickupListNo: safeStr(row?.PickupList_No),
+    unprintedFound: Number(row?.Unprinted_Found || 0),
+    errorMessage: safeStr(row?.Error_Message),
+    unprintedVouchers: getAcsTableRows(data)
+      .map((r) => safeStr(r?.Unprinted_Vouchers))
+      .filter(Boolean),
+  };
+}
+
+export function extractPickupLists(data) {
+  return getAcsTableRows(data).map((r) => ({
+    pickupDate: safeStr(r?.Pickup_date),
+    pickupListDateTime: safeStr(r?.Pickup_List_DateTime),
+    userId: safeStr(r?.User_ID),
+    pickupListNo: safeStr(r?.PickupList_No),
+    listVouchersCount: Number(r?.List_Vouchers_Count || 0),
+  }));
+}
+
+export function makeAcsLabelUrl(number) {
+  return `/api/acs-label-pdf?number=${encodeURIComponent(String(number).trim())}`;
+}
+
+export function makeAcsPickupListPdfUrl(massNumber, pickupDate) {
+  return `/api/acs-print-pickup-list?massNumber=${encodeURIComponent(
+    String(massNumber),
+  )}&pickupDate=${encodeURIComponent(String(pickupDate))}`;
+}
+
+function looksLikePdfBase64(text) {
+  return typeof text === "string" && text.replace(/\s+/g, "").startsWith("JVBER");
+}
+
+function base64ToUint8Array(base64) {
+  const normalized = base64.replace(/\s+/g, "");
+  const buf = Buffer.from(normalized, "base64");
+  return new Uint8Array(buf);
+}
+
+export function extractPdfBytesFromAcsResponse(data) {
+  const env = getAcsEnvelope(data);
+
+  const roots = [
+    env?.ACSObjectOutput,
+    env?.ACSDictionaryOutput,
+    env?.ACSValueOutput,
+    env?.ACSTableOutput,
+    env,
+    data,
+  ];
+
+  const visit = (node) => {
+    if (!node) return null;
+
+    if (Array.isArray(node)) {
+      if (
+        node.length > 100 &&
+        node.every((x) => Number.isInteger(x) && x >= 0 && x <= 255)
+      ) {
+        return Uint8Array.from(node);
+      }
+      for (const item of node) {
+        const found = visit(item);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    if (typeof node === "string") {
+      if (node.length > 100 && looksLikePdfBase64(node)) {
+        return base64ToUint8Array(node);
+      }
+      return null;
+    }
+
+    if (typeof node === "object") {
+      for (const value of Object.values(node)) {
+        const found = visit(value);
+        if (found) return found;
+      }
+    }
+
+    return null;
+  };
+
+  for (const root of roots) {
+    const found = visit(root);
+    if (found) return found;
+  }
+
+  return null;
+}
+export async function getAcsContentTypes() {
+  return acsCall("ACS_Get_Content_Types", {
+    ...getCreds(),
+    Language: "GR",
+  });
+}
