@@ -4,7 +4,6 @@ import { useLocation } from "react-router";
 export default function AppHome() {
   const location = useLocation();
 
-  // Preserva shop/host/embedded dalla URL corrente dell'app
   const vouchersHref = useMemo(() => {
     const qs = location.search || "";
     const base = "/app/vouchers";
@@ -17,102 +16,104 @@ export default function AppHome() {
     return qs ? `${base}${qs}` : base;
   }, [location.search]);
 
+  const cardStyle = {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "space-between",
+    minHeight: 280,
+    padding: "28px 24px",
+    borderRadius: 20,
+    background: "#111",
+    color: "#fff",
+    textDecoration: "none",
+    textAlign: "center",
+    boxShadow: "0 6px 18px rgba(0,0,0,0.10)",
+  };
+
+  const logoWrapStyle = {
+    width: "100%",
+    height: 140,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  };
+
+  const labelWrapStyle = {
+    width: "100%",
+    minHeight: 56,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 18,
+  };
+
+  const labelStyle = {
+    fontSize: 20,
+    fontWeight: 700,
+    lineHeight: 1.2,
+  };
+
   return (
     <div
       style={{
-        maxWidth: 820,
-        margin: "24px auto",
-        padding: 16,
+        maxWidth: 980,
+        margin: "40px auto",
+        padding: 20,
         fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
       }}
     >
-      <h1 style={{ fontSize: 22, marginBottom: 6 }}>Shipping Labels</h1>
-      <p style={{ marginTop: 0, color: "#555" }}>
-        Manage EasyMail and ACS shipping labels from Shopify Admin.
+      <h1 style={{ fontSize: 26, marginBottom: 8 }}>Shipping Labels</h1>
+
+      <p style={{ marginTop: 0, color: "#555", marginBottom: 30, fontSize: 15 }}>
+        Manage your courier labels directly from Shopify Admin.
       </p>
 
       <div
         style={{
-          border: "1px solid #e5e5e5",
-          borderRadius: 14,
-          padding: 16,
-          background: "#fff",
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 22,
         }}
       >
-        <h2 style={{ fontSize: 16, margin: "0 0 10px 0" }}>
-          How to generate labels
-        </h2>
-        <ol style={{ margin: 0, paddingLeft: 18, color: "#333", lineHeight: 1.55 }}>
-          <li>Go to <b>Orders</b>.</li>
-          <li>Open an order that you want to ship.</li>
-          <li>Click <b>More actions</b> (top right).</li>
-          <li>Select <b>EasyMail Labels</b> or <b>ACS Labels</b>.</li>
-          <li>Choose the number of pieces (1–5) and click <b>Generate</b>.</li>
-          <li>Use <b>View/Print</b> to open the label and print it.</li>
-        </ol>
-      </div>
+        <s-link href={acsVouchersHref} style={cardStyle}>
+          <div style={logoWrapStyle}>
+            <img
+              src="/acs-logo.png"
+              alt="ACS"
+              style={{
+                maxHeight: 90,
+                maxWidth: "80%",
+                width: "auto",
+                objectFit: "contain",
+                display: "block",
+              }}
+            />
+          </div>
 
-      {/* EASYMAIL */}
-      <div
-        style={{
-          marginTop: 16,
-          border: "1px solid #e5e5e5",
-          borderRadius: 14,
-          padding: 16,
-          background: "#fff",
-        }}
-      >
-        <h2 style={{ fontSize: 16, margin: "0 0 10px 0" }}>EasyMail Daily Labels</h2>
-        <p style={{ marginTop: 0, color: "#555" }}>
-          View all EasyMail labels created on a specific day, cancel vouchers,
-          refresh the list, and print the end-of-day PDF list.
-        </p>
-
-        <s-link
-          href={vouchersHref}
-          style={{
-            display: "inline-block",
-            padding: "10px 14px",
-            borderRadius: 12,
-            background: "#111",
-            color: "#fff",
-            textDecoration: "none",
-            fontSize: 14,
-          }}
-        >
-          Open EasyMail Daily Labels
+          <div style={labelWrapStyle}>
+            <div style={labelStyle}>ACS Daily Labels</div>
+          </div>
         </s-link>
-      </div>
 
-      {/* ACS */}
-      <div
-        style={{
-          marginTop: 16,
-          border: "1px solid #e5e5e5",
-          borderRadius: 14,
-          padding: 16,
-          background: "#fff",
-        }}
-      >
-        <h2 style={{ fontSize: 16, margin: "0 0 10px 0" }}>ACS Daily Labels</h2>
-        <p style={{ marginTop: 0, color: "#555" }}>
-          View all ACS labels created for a pickup date, reprint vouchers,
-          cancel shipments (if still allowed), and generate or print the pickup list.
-        </p>
+        <s-link href={vouchersHref} style={cardStyle}>
+          <div style={logoWrapStyle}>
+            <img
+              src="/easymail-logo.png"
+              alt="EasyMail"
+              style={{
+                maxHeight: 90,
+                maxWidth: "80%",
+                width: "auto",
+                objectFit: "contain",
+                display: "block",
+              }}
+            />
+          </div>
 
-        <s-link
-          href={acsVouchersHref}
-          style={{
-            display: "inline-block",
-            padding: "10px 14px",
-            borderRadius: 12,
-            background: "#111",
-            color: "#fff",
-            textDecoration: "none",
-            fontSize: 14,
-          }}
-        >
-          Open ACS Daily Labels
+          <div style={labelWrapStyle}>
+            <div style={labelStyle}>EasyMail Daily Labels</div>
+          </div>
         </s-link>
       </div>
     </div>

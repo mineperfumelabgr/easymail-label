@@ -176,20 +176,8 @@ function Extension() {
     [orderId, pieces, codEnabled, pickupDate, clampPieces, fetchJson, normalizeLabels],
   );
 
-  const hidePrimaryGenerate = mode === "exists";
-
   return (
     <s-admin-action heading="ACS Labels">
-      {!hidePrimaryGenerate && (
-        <s-button
-          slot="primaryAction"
-          onClick={() => runGenerate({ forceNew: false })}
-          disabled={isLoading}
-        >
-          {isLoading ? "..." : "Generate ACS label"}
-        </s-button>
-      )}
-
       <s-box paddingBlockStart="small">
         <s-banner tone="info">
           <s-text>Pickup date (YYYY-MM-DD):</s-text>
@@ -361,7 +349,16 @@ function Extension() {
           </s-banner>
         </s-box>
       )}
-
+{mode === "idle" && (
+  <s-box paddingBlockStart="large">
+    <s-button
+      onClick={() => runGenerate({ forceNew: false })}
+      disabled={isLoading}
+    >
+      {isLoading ? "Generating..." : "Generate ACS label"}
+    </s-button>
+  </s-box>
+)}
       {errorMessage && (
         <s-box paddingBlockStart="small">
           <s-banner tone="critical">

@@ -15,6 +15,7 @@ export default function AcsDailyLabelsPage() {
   const [issuing, setIssuing] = useState(false);
   const [manualDeleting, setManualDeleting] = useState(false);
   const [manualVoucherNo, setManualVoucherNo] = useState("");
+  const [shipmentsOpen, setShipmentsOpen] = useState(false);
   const [data, setData] = useState({ labels: [], pickupLists: [] });
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -120,7 +121,7 @@ export default function AcsDailyLabelsPage() {
 
       setNotice(
         json.message ||
-          `ACS voucher ${voucherNumber} deleted. Shopify metafields were not touched because no order was specified.`,
+          `ACS voucher ${voucherNumber} deleted successfully. Shopify metafields were not touched because no order was specified.`,
       );
       setManualVoucherNo("");
       await load(date);
@@ -201,57 +202,18 @@ export default function AcsDailyLabelsPage() {
         <button
           onClick={handleIssuePickupList}
           disabled={loading || issuing}
-          style={{ padding: "8px 12px" }}
+          style={{
+            padding: "10px 16px",
+            border: "1px solid #2d8a46",
+            borderRadius: 8,
+            background: "#2f9e44",
+            color: "#fff",
+            fontWeight: 600,
+            cursor: loading || issuing ? "not-allowed" : "pointer",
+          }}
         >
           {issuing ? "Issuing..." : "Issue pickup list"}
         </button>
-      </div>
-
-      <div
-        style={{
-          marginBottom: 20,
-          padding: 16,
-          border: "1px solid #ddd",
-          borderRadius: 8,
-          background: "#fff",
-        }}
-      >
-        <h2 style={{ fontSize: 18, marginTop: 0, marginBottom: 12 }}>
-          Manual voucher deletion
-        </h2>
-
-        <p style={{ marginTop: 0, color: "#555", fontSize: 14 }}>
-          Enter any ACS voucher number and delete it directly from ACS.
-          This manual action does not clear Shopify metafields unless the voucher is also deleted through an order row above.
-        </p>
-
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <input
-            type="text"
-            value={manualVoucherNo}
-            onChange={(e) => setManualVoucherNo(e.target.value)}
-            placeholder="Enter ACS voucher number"
-            style={{
-              padding: 10,
-              minWidth: 260,
-              border: "1px solid #ccc",
-              borderRadius: 6,
-            }}
-          />
-
-          <button
-            onClick={handleManualDelete}
-            disabled={manualDeleting}
-            style={{
-              padding: "10px 14px",
-              border: "1px solid #d99",
-              borderRadius: 6,
-              background: "#fff7f7",
-            }}
-          >
-            {manualDeleting ? "Deleting..." : "Delete voucher manually"}
-          </button>
-        </div>
       </div>
 
       {notice ? (
@@ -268,74 +230,106 @@ export default function AcsDailyLabelsPage() {
 
       <h2 style={{ fontSize: 20, marginBottom: 12 }}>Labels for {date}</h2>
 
-      {loading ? (
-        <p>Loading...</p>
-      ) : data.labels.length === 0 ? (
-        <p>No ACS labels found for this pickup date.</p>
-      ) : (
-        <div style={{ display: "grid", gap: 12 }}>
-          {data.labels.map((row) => (
-            <div
-              key={row.orderId + row.voucherNumber}
-              style={{
-                border: "1px solid #ddd",
-                borderRadius: 8,
-                padding: 16,
-                background: "#fff",
-              }}
-            >
-              <div style={{ marginBottom: 8 }}>
-                <strong>{row.orderName}</strong> — Voucher: <strong>{row.voucherNumber}</strong>
-              </div>
+      <div
+        style={{
+          marginBottom: 16,
+          padding: 16,
+          border: "1px solid #ddd",
+          borderRadius: 8,
+          background: "#fff",
+        }}
+      >
+        <div style={{ marginBottom: 8, fontSize: 16, fontWeight: 600 }}>
+          Shipments summary for {date}
+        </div>
 
-              <div style={{ fontSize: 14, marginBottom: 8 }}>
-                Customer: {row.customerName || "—"} | City: {row.city || "—"} | ZIP: {row.zip || "—"} | Country: {row.country || "—"}
-              </div>
+        <div style={{ fontSize: 14, color: "#555", marginBottom: 12 }}>
+          Total vouchers found: <strong>{data.labels.length}</strong>
+        </div>
 
-              <div style={{ fontSize: 14, marginBottom: 8 }}>
-                Pieces: {row.pieces} | COD: {row.isCOD ? "YES" : "NO"} | Pickup date: {row.pickupDate}
-              </div>
+        <button
+          onClick={() => setShipmentsOpen((v) => !v)}
+          style={{
+            padding: "8px 12px",
+            border: "1px solid #ccc",
+            borderRadius: 6,
+            background: "#f7f7f7",
+          }}
+        >
+          {shipmentsOpen ? "Hide shipments ▲" : "Show shipments ▼"}
+        </button>
+      </div>
 
-              {row.shipmentNumbers?.length ? (
-                <div style={{ fontSize: 14, marginBottom: 12 }}>
-                  Shipments: {row.shipmentNumbers.join(", ")}
+      {shipmentsOpen ? (
+        loading ? (
+          <p>Loading...</p>
+        ) : data.labels.length === 0 ? (
+          <p>No ACS labels found for this pickup date.</p>
+        ) : (
+          <div style={{ display: "grid", gap: 12 }}>
+            {data.labels.map((row) => (
+              <div
+                key={row.orderId + row.voucherNumber}
+                style={{
+                  border: "1px solid #ddd",
+                  borderRadius: 8,
+                  padding: 16,
+                  background: "#fff",
+                }}
+              >
+                <div style={{ marginBottom: 8 }}>
+                  <strong>{row.orderName}</strong> — Voucher: <strong>{row.voucherNumber}</strong>
                 </div>
-              ) : null}
 
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {(row.labels || []).map((l, idx) => (
-                  <a
-                    key={l.number}
-                    href={addInlineParam(l.url)}
-                    target="_blank"
-                    rel="noreferrer"
+                <div style={{ fontSize: 14, marginBottom: 8 }}>
+                  Customer: {row.customerName || "—"} | City: {row.city || "—"} | ZIP: {row.zip || "—"} | Country: {row.country || "—"}
+                </div>
+
+                <div style={{ fontSize: 14, marginBottom: 8 }}>
+                  Pieces: {row.pieces} | COD: {row.isCOD ? "YES" : "NO"} | Pickup date: {row.pickupDate}
+                </div>
+
+                {row.shipmentNumbers?.length ? (
+                  <div style={{ fontSize: 14, marginBottom: 12 }}>
+                    Shipments: {row.shipmentNumbers.join(", ")}
+                  </div>
+                ) : null}
+
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {(row.labels || []).map((l, idx) => (
+                    <a
+                      key={l.number}
+                      href={addInlineParam(l.url)}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{
+                        padding: "8px 12px",
+                        border: "1px solid #ccc",
+                        borderRadius: 6,
+                        textDecoration: "none",
+                      }}
+                    >
+                      {row.labels.length > 1 ? `Print label #${idx + 1}` : "Print label"}
+                    </a>
+                  ))}
+
+                  <button
+                    onClick={() => handleDelete(row.orderId, row.voucherNumber)}
                     style={{
                       padding: "8px 12px",
-                      border: "1px solid #ccc",
+                      border: "1px solid #d99",
                       borderRadius: 6,
-                      textDecoration: "none",
+                      background: "#fff7f7",
                     }}
                   >
-                    {row.labels.length > 1 ? `Print label #${idx + 1}` : "Print label"}
-                  </a>
-                ))}
-
-                <button
-                  onClick={() => handleDelete(row.orderId, row.voucherNumber)}
-                  style={{
-                    padding: "8px 12px",
-                    border: "1px solid #d99",
-                    borderRadius: 6,
-                    background: "#fff7f7",
-                  }}
-                >
-                  Delete voucher
-                </button>
+                    Delete voucher
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
-      )}
+            ))}
+          </div>
+        )
+      ) : null}
 
       <h2 style={{ fontSize: 20, marginTop: 28, marginBottom: 12 }}>
         Pickup lists for {date}
@@ -379,6 +373,53 @@ export default function AcsDailyLabelsPage() {
           ))}
         </div>
       )}
+
+      <div
+        style={{
+          marginTop: 28,
+          padding: 16,
+          border: "1px solid #ddd",
+          borderRadius: 8,
+          background: "#fff",
+        }}
+      >
+        <h2 style={{ fontSize: 18, marginTop: 0, marginBottom: 12 }}>
+          Manual voucher deletion
+        </h2>
+
+        <p style={{ marginTop: 0, color: "#555", fontSize: 14 }}>
+          Enter any ACS voucher number and delete it directly from ACS.
+          This manual action does not clear Shopify metafields unless the voucher is also deleted through an order row above.
+        </p>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input
+            type="text"
+            value={manualVoucherNo}
+            onChange={(e) => setManualVoucherNo(e.target.value)}
+            placeholder="Enter ACS voucher number"
+            style={{
+              padding: 10,
+              minWidth: 260,
+              border: "1px solid #ccc",
+              borderRadius: 6,
+            }}
+          />
+
+          <button
+            onClick={handleManualDelete}
+            disabled={manualDeleting}
+            style={{
+              padding: "10px 14px",
+              border: "1px solid #d99",
+              borderRadius: 6,
+              background: "#fff7f7",
+            }}
+          >
+            {manualDeleting ? "Deleting..." : "Delete voucher manually"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
