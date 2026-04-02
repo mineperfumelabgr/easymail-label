@@ -174,6 +174,21 @@ function getExistingTrackingNumbers(order) {
   return uniq(nums);
 }
 
+function makeAcsTrackingUrl(number) {
+  return `https://webapp.acscourier.net/track-shipment/${number}`;
+}
+
+function buildAcsTrackingPayload(trackingNumbers) {
+  const numbers = (trackingNumbers || []).filter(Boolean).map(String);
+  const mainNumber = numbers[0] || null;
+
+  return {
+    company: "ACS Courier",
+    number: mainNumber,
+    url: mainNumber ? makeAcsTrackingUrl(mainNumber) : null,
+  };
+}
+
 async function updateTrackingOnExistingFulfillment(admin, fulfillmentId, trackingNumbers) {
   const mutation = `#graphql
     mutation UpdateTracking(
@@ -194,11 +209,7 @@ async function updateTrackingOnExistingFulfillment(admin, fulfillmentId, trackin
   const variables = {
     fulfillmentId,
     notifyCustomer: false,
-trackingInfoInput: {
-  company: "ACS Courier",
-  numbers: trackingNumbers,
-  urls: trackingNumbers.map((n) => `https://webapp.acscourier.net/track-shipment/`),
-},
+trackingInfoInput: buildAcsTrackingPayload(trackingNumbers),
   };
   const j = await adminGraphql(admin, mutation, variables);
   return j?.data?.fulfillmentTrackingInfoUpdateV2?.userErrors || [];
@@ -225,11 +236,7 @@ async function createFulfillment(admin, fulfillmentOrderId, lineItems, trackingN
         },
       ],
       notifyCustomer: true,
-trackingInfo: {
-  company: "ACS Courier",
-  numbers: trackingNumbers,
-  urls: trackingNumbers.map((n) => `https://webapp.acscourier.net/track-shipment/`),
-},
+trackingInfo: buildAcsTrackingPayload(trackingNumbers),
     },
   };
   const j = await adminGraphql(admin, mutation, variables);
