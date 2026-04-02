@@ -194,10 +194,11 @@ async function updateTrackingOnExistingFulfillment(admin, fulfillmentId, trackin
   const variables = {
     fulfillmentId,
     notifyCustomer: false,
-    trackingInfoInput: {
-      company: "ACS",
-      numbers: trackingNumbers,
-    },
+trackingInfoInput: {
+  company: "ACS Courier",
+  numbers: trackingNumbers,
+  urls: trackingNumbers.map((n) => `https://webapp.acscourier.net/track-shipment/`),
+},
   };
   const j = await adminGraphql(admin, mutation, variables);
   return j?.data?.fulfillmentTrackingInfoUpdateV2?.userErrors || [];
@@ -224,10 +225,11 @@ async function createFulfillment(admin, fulfillmentOrderId, lineItems, trackingN
         },
       ],
       notifyCustomer: true,
-      trackingInfo: {
-        company: "ACS",
-        numbers: trackingNumbers,
-      },
+trackingInfo: {
+  company: "ACS Courier",
+  numbers: trackingNumbers,
+  urls: trackingNumbers.map((n) => `https://webapp.acscourier.net/track-shipment/`),
+},
     },
   };
   const j = await adminGraphql(admin, mutation, variables);
