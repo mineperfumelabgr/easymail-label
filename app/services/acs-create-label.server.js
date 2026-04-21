@@ -83,6 +83,7 @@ export async function getAcsOrder(admin, orderGid) {
         currentTotalPriceSet { shopMoney { amount currencyCode } }
         shippingAddress {
           name
+          company
           address1
           address2
           city
@@ -364,8 +365,8 @@ const contentTypeId = ["CY", "BG"].includes(country) ? requestedContentTypeId : 
     Recipient_Region: region,
     Recipient_Phone: phoneNumber,
     Recipient_Cell_Phone: phoneNumber,
-    Recipient_Floor: null,
-    Recipient_Company_Name: null,
+    Recipient_Floor: safeStr(ship.address2) || null,
+    Recipient_Company_Name: safeStr(ship.company) || null,
     Recipient_Country: country,
     Acs_Station_Destination: null,
     Acs_Station_Branch_Destination: null,
