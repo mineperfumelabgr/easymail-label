@@ -308,9 +308,9 @@ export async function createOrReuseAcsLabel({
   const customer = order.customer || {};
 
   const country = safeStr(ship.countryCodeV2 || "GR").toUpperCase();
-  if (!["GR", "CY"].includes(country)) {
+  if (!["GR", "CY", "BG"].includes(country)) {
     throw new Error(
-      `ACS label creation is currently supported only for GR and CY destinations. Destination was: ${country || "UNKNOWN"}.`,
+      `ACS label creation is currently supported only for GR,CY and BG destinations. Destination was: ${country || "UNKNOWN"}.`,
     );
   }
 
