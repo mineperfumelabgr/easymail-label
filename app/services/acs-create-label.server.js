@@ -349,7 +349,7 @@ export async function createOrReuseAcsLabel({
   const phoneNumber = phoneDigits ? Number(phoneDigits) : null;
   const email = safeStr(customer.email) || null;
 
-  const contentTypeId = country === "CY" ? requestedContentTypeId : null;
+const contentTypeId = ["CY", "BG"].includes(country) ? requestedContentTypeId : null;
 
   const payload = {
     Pickup_Date: requestedPickupDate,
