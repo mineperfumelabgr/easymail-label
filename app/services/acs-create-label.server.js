@@ -355,8 +355,11 @@ const contentTypeId = ["CY", "BG"].includes(country) ? requestedContentTypeId : 
     Pickup_Date: requestedPickupDate,
     Sender: process.env.ACS_SENDER_NAME || "MINE PERFUME LAB GR",
     Recipient_Name: fullName,
-    Recipient_Address: country === "BG" ? `${street}, ${zip}` : street,
-    Recipient_Address_Number: Number(number) || 1,
+    Recipient_Address: street,
+    Recipient_Address_Number:
+  country === "BG"
+    ? `${number || ""}${zip ? ` (${zip})` : ""}`.trim()
+    : Number(number) || 1,
     Recipient_Zipcode: country === "BG" ? 10001 : zipDigits,
     Recipient_Region: region,
     Recipient_Phone: phoneNumber,
