@@ -391,12 +391,15 @@ const contentTypeId = ["CY", "BG"].includes(country) ? requestedContentTypeId : 
   console.log("ACS CREATE PAYLOAD:");
   console.dir(payload, { depth: 10 });
 
-  const createResp = await createAcsVoucher(payload);
-  const masterVoucherNumber = extractAcsVoucherNo(createResp);
+const createResp = await createAcsVoucher(payload);
+console.log("ACS CREATE RESPONSE:");
+console.dir(createResp, { depth: 10 });
 
-  if (!masterVoucherNumber) {
-    throw new Error("ACS did not return Voucher_No.");
-  }
+const masterVoucherNumber = extractAcsVoucherNo(createResp);
+
+if (!masterVoucherNumber) {
+  throw new Error(`ACS did not return Voucher_No. Response: ${JSON.stringify(createResp).slice(0, 1000)}`);
+}
 
   let childNumbers = [];
   if (Number(pieces) > 1) {
