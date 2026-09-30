@@ -13,6 +13,26 @@ function todayLocalYMD() {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function isValidDateYMD(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [
+    31, leapYear ? 29 : 28, 31, 30, 31, 30,
+    31, 31, 30, 31, 30, 31,
+  ];
+  return month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth[month - 1];
+}
+
+function readDateFieldValue(event) {
+  return String(
+    event?.currentTarget?.value ??
+      event?.target?.value ??
+      event?.detail?.value ??
+      "",
+  );
+}
+
 function Extension() {
   const { data } = shopify;
   const orderId = data?.selected?.[0]?.id || null;
@@ -20,13 +40,20 @@ function Extension() {
   const [isLoading, setIsLoading] = useState(false);
   const [pieces, setPieces] = useState("1");
   const [pickupDate, setPickupDate] = useState(todayLocalYMD());
+  const [employees, setEmployees] = useState([]);
+  const [employeesLoading, setEmployeesLoading] = useState(true);
+  const [employeesError, setEmployeesError] = useState("");
+  const [employeeId, setEmployeeId] = useState("");
 
   const [codEnabled, setCodEnabled] = useState(false);
   const [codAutoHint, setCodAutoHint] = useState("");
+  const [codAmount, setCodAmount] = useState("");
+  const [codCurrencyCode, setCodCurrencyCode] = useState("EUR");
 
   const [mode, setMode] = useState("idle"); // idle | exists | generated
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [employeeTagWarning, setEmployeeTagWarning] = useState("");
 
   const [voucherNumber, setVoucherNumber] = useState("");
   const [labelUrl, setLabelUrl] = useState("");
@@ -112,6 +139,12 @@ function Extension() {
           setCodEnabled(detected);
           setCodAutoHint(detected ? "Auto-detected: COD order" : "");
         }
+
+        if (!cancelled) {
+          const total = Number(j?.orderTotal);
+          setCodAmount(Number.isFinite(total) && total > 0 ? total.toFixed(2) : "");
+          setCodCurrencyCode(String(j?.currencyCode || "EUR"));
+        }
       } catch {
         // ignore
       }
@@ -123,14 +156,43 @@ function Extension() {
     };
   }, [orderId, fetchJson]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadEmployees() {
+      setEmployeesLoading(true);
+      setEmployeesError("");
+      try {
+        const json = await fetchJson("/api/employees");
+        if (!cancelled) {
+          setEmployees(Array.isArray(json.employees) ? json.employees : []);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setEmployeesError(error?.message || "Could not load employees.");
+        }
+      } finally {
+        if (!cancelled) setEmployeesLoading(false);
+      }
+    }
+
+    loadEmployees();
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchJson]);
+
   const runGenerate = useCallback(
     async ({ forceNew }) => {
       setIsLoading(true);
       setErrorMessage("");
+      setEmployeeTagWarning("");
       setMessage("");
 
       try {
         if (!orderId) throw new Error("Order ID is not available.");
+        if (!employeeId) throw new Error("Select an employee before generating the label.");
+        if (!isValidDateYMD(pickupDate)) throw new Error("Enter a valid pickup date.");
 
         const pcs = clampPieces(pieces);
 
@@ -139,11 +201,17 @@ function Extension() {
           `&pieces=${encodeURIComponent(pcs)}` +
           `&cod=${encodeURIComponent(codEnabled ? "1" : "0")}` +
           `&pickupDate=${encodeURIComponent(pickupDate)}` +
+          `&employeeId=${encodeURIComponent(employeeId)}` +
           `&contentTypeId=${encodeURIComponent("7")}`;
+
+        if (codEnabled && codAmount.trim()) {
+          url += `&codAmount=${encodeURIComponent(codAmount.trim())}`;
+        }
 
         if (forceNew) url += `&forceNew=1`;
 
         const json = await fetchJson(url);
+        setEmployeeTagWarning(String(json.employeeTagWarning || ""));
 
         const newLabels = normalizeLabels(json);
         setLabels(newLabels);
@@ -173,29 +241,46 @@ function Extension() {
         setIsLoading(false);
       }
     },
-    [orderId, pieces, codEnabled, pickupDate, clampPieces, fetchJson, normalizeLabels],
+    [orderId, pieces, codEnabled, codAmount, pickupDate, employeeId, clampPieces, fetchJson, normalizeLabels],
   );
 
   return (
     <s-admin-action heading="ACS Labels">
       <s-box paddingBlockStart="small">
-        <s-banner tone="info">
-          <s-text>Pickup date (YYYY-MM-DD):</s-text>
+        <s-date-field
+          label="Pickup date"
+          value={pickupDate}
+          onChange={(event) => setPickupDate(readDateFieldValue(event))}
+          onInput={(event) => setPickupDate(readDateFieldValue(event))}
+          error={pickupDate && !isValidDateYMD(pickupDate) ? "Enter a real date in YYYY-MM-DD format." : undefined}
+          details="This date will be used later for the ACS pickup list."
+        ></s-date-field>
+      </s-box>
 
-          <s-box paddingBlockStart="small">
-            <s-text-field
-              value={pickupDate}
-              onInput={(e) => setPickupDate(e.target.value)}
-              placeholder="YYYY-MM-DD"
-            />
-          </s-box>
-
+      <s-box paddingBlockStart="small">
+        <s-select
+          label="Name"
+          value={employeeId}
+          required
+          disabled={employeesLoading || isLoading || !employees.length}
+          onChange={(event) => setEmployeeId(event.currentTarget.value)}
+        >
+          <s-option value="">Select employee</s-option>
+          {employees.map((employee) => (
+            <s-option key={employee.id} value={employee.id}>
+              {employee.name}
+            </s-option>
+          ))}
+        </s-select>
+        {employeesError ? (
           <s-box paddingBlockStart="xsmall">
-            <s-text tone="subdued">
-              This date will be used later for the ACS pickup list.
-            </s-text>
+            <s-banner tone="critical"><s-text>{employeesError}</s-text></s-banner>
           </s-box>
-        </s-banner>
+        ) : !employeesLoading && !employees.length ? (
+          <s-box paddingBlockStart="xsmall">
+            <s-text tone="subdued">Add employees in the Dipendenti section before generating a label.</s-text>
+          </s-box>
+        ) : null}
       </s-box>
 
       <s-box paddingBlockStart="small">
@@ -241,6 +326,20 @@ function Extension() {
               onChange={(e) => setCodEnabled(readChecked(e))}
             />
           </s-box>
+
+          {codEnabled ? (
+            <s-box paddingBlockStart="small">
+              <s-text-field
+                label="COD amount"
+                suffix={codCurrencyCode}
+                details="Prefilled with the order total; edit it when you need a different COD amount."
+                value={codAmount}
+                onInput={(e) => setCodAmount(e.target.value)}
+                placeholder="Order total"
+                disabled={isLoading}
+              />
+            </s-box>
+          ) : null}
 
           {codAutoHint ? (
             <s-box paddingBlockStart="xsmall">
@@ -296,7 +395,7 @@ function Extension() {
                   </s-button>
                 )}
 
-                <s-button onClick={() => runGenerate({ forceNew: true })} disabled={isLoading}>
+                <s-button onClick={() => runGenerate({ forceNew: true })} disabled={isLoading || !employeeId || !isValidDateYMD(pickupDate)}>
                   Generate new ACS label (keep old)
                 </s-button>
               </s-inline-stack>
@@ -349,11 +448,16 @@ function Extension() {
           </s-banner>
         </s-box>
       )}
+      {employeeTagWarning && (
+        <s-box paddingBlockStart="small">
+          <s-banner tone="warning"><s-text>{employeeTagWarning}</s-text></s-banner>
+        </s-box>
+      )}
 {mode === "idle" && (
   <s-box paddingBlockStart="large">
     <s-button
       onClick={() => runGenerate({ forceNew: false })}
-      disabled={isLoading}
+      disabled={isLoading || employeesLoading || !employeeId || !isValidDateYMD(pickupDate)}
     >
       {isLoading ? "Generating..." : "Generate ACS label"}
     </s-button>

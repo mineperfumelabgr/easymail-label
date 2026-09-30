@@ -50,6 +50,16 @@ export function parseCodOverride(param) {
   return null;
 }
 
+export function parseCodAmountOverride(param) {
+  if (param === null || param === undefined || String(param).trim() === "") return null;
+  const normalized = String(param).trim().replace(",", ".");
+  const amount = Number(normalized);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error("COD amount must be a positive number.");
+  }
+  return to2(amount);
+}
+
 export function todayYMD() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -253,6 +263,7 @@ export async function createOrReuseAcsLabel({
   forceNew = false,
   pieces = 1,
   codOverride = null,
+  codAmountOverride = null,
   requestedContentTypeId = 7,
   requestedPickupDate,
 }) {
@@ -343,7 +354,13 @@ export async function createOrReuseAcsLabel({
   const isCOD = codOverride === null ? autoIsCOD : codOverride;
 
   const orderTotal = to2(order?.currentTotalPriceSet?.shopMoney?.amount);
-  const codAmount = isCOD && orderTotal > 0 ? orderTotal : null;
+  const codAmount = isCOD
+    ? (codAmountOverride !== null ? to2(codAmountOverride) : orderTotal > 0 ? orderTotal : null)
+    : null;
+
+  if (isCOD && (!Number.isFinite(codAmount) || codAmount <= 0)) {
+    throw new Error("COD is enabled, but no valid COD amount is available. Enter an amount and try again.");
+  }
 
   const phoneRaw = safeStr(ship.phone) || safeStr(customer.phone) || "";
   const phoneDigits = onlyDigits(phoneRaw);

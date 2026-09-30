@@ -16,6 +16,7 @@ export default function AcsDailyLabelsPage() {
   const [manualDeleting, setManualDeleting] = useState(false);
   const [manualVoucherNo, setManualVoucherNo] = useState("");
   const [shipmentsOpen, setShipmentsOpen] = useState(false);
+  const [shipmentSearch, setShipmentSearch] = useState("");
   const [data, setData] = useState({ labels: [], pickupLists: [] });
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -24,7 +25,9 @@ export default function AcsDailyLabelsPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`/api/acs-daily-labels?date=${encodeURIComponent(selectedDate)}`);
+      const res = await fetch(
+        `/api/acs-daily-labels?date=${encodeURIComponent(selectedDate)}`,
+      );
       const text = await res.text();
 
       let json;
@@ -52,6 +55,15 @@ export default function AcsDailyLabelsPage() {
   useEffect(() => {
     load(date);
   }, []);
+
+  const searchValue = shipmentSearch.trim().toLocaleLowerCase();
+  const visibleLabels = searchValue
+    ? data.labels.filter((row) =>
+        `${row.orderName || ""} ${row.customerName || ""}`
+          .toLocaleLowerCase()
+          .includes(searchValue),
+      )
+    : data.labels;
 
   async function handleDelete(orderId, voucherNumber) {
     const ok = window.confirm(
@@ -157,10 +169,15 @@ export default function AcsDailyLabelsPage() {
 
       if (!res.ok || !json?.success) {
         let extra = "";
-        if (Array.isArray(json?.unprintedVouchers) && json.unprintedVouchers.length) {
+        if (
+          Array.isArray(json?.unprintedVouchers) &&
+          json.unprintedVouchers.length
+        ) {
           extra = ` Unprinted vouchers: ${json.unprintedVouchers.join(", ")}`;
         }
-        throw new Error((json?.message || "Failed to issue pickup list.") + extra);
+        throw new Error(
+          (json?.message || "Failed to issue pickup list.") + extra,
+        );
       }
 
       setNotice(json.message || "Pickup list issued.");
@@ -195,7 +212,11 @@ export default function AcsDailyLabelsPage() {
           />
         </label>
 
-        <button onClick={() => load(date)} disabled={loading} style={{ padding: "8px 12px" }}>
+        <button
+          onClick={() => load(date)}
+          disabled={loading}
+          style={{ padding: "8px 12px" }}
+        >
           {loading ? "Loading..." : "Load labels"}
         </button>
 
@@ -217,13 +238,27 @@ export default function AcsDailyLabelsPage() {
       </div>
 
       {notice ? (
-        <div style={{ marginBottom: 16, padding: 12, background: "#eef8ee", border: "1px solid #b9dfb9" }}>
+        <div
+          style={{
+            marginBottom: 16,
+            padding: 12,
+            background: "#eef8ee",
+            border: "1px solid #b9dfb9",
+          }}
+        >
           {notice}
         </div>
       ) : null}
 
       {error ? (
-        <div style={{ marginBottom: 16, padding: 12, background: "#fdecec", border: "1px solid #efb3b3" }}>
+        <div
+          style={{
+            marginBottom: 16,
+            padding: 12,
+            background: "#fdecec",
+            border: "1px solid #efb3b3",
+          }}
+        >
           {error}
         </div>
       ) : null}
@@ -266,68 +301,110 @@ export default function AcsDailyLabelsPage() {
         ) : data.labels.length === 0 ? (
           <p>No ACS labels found for this pickup date.</p>
         ) : (
-          <div style={{ display: "grid", gap: 12 }}>
-            {data.labels.map((row) => (
-              <div
-                key={row.orderId + row.voucherNumber}
-                style={{
-                  border: "1px solid #ddd",
-                  borderRadius: 8,
-                  padding: 16,
-                  background: "#fff",
-                }}
+          <>
+            <div style={{ marginBottom: 12 }}>
+              <label
+                style={{ display: "block", marginBottom: 6, fontWeight: 600 }}
+                htmlFor="acs-daily-order-search"
               >
-                <div style={{ marginBottom: 8 }}>
-                  <strong>{row.orderName}</strong> — Voucher: <strong>{row.voucherNumber}</strong>
-                </div>
+                Search order number or customer
+              </label>
+              <input
+                id="acs-daily-order-search"
+                type="search"
+                value={shipmentSearch}
+                onChange={(e) => setShipmentSearch(e.target.value)}
+                placeholder="e.g. #1042 or Maria Papadopoulou"
+                style={{
+                  width: "100%",
+                  maxWidth: 520,
+                  boxSizing: "border-box",
+                  padding: 10,
+                  border: "1px solid #ccc",
+                  borderRadius: 6,
+                }}
+              />
+              <div style={{ marginTop: 6, color: "#666", fontSize: 13 }}>
+                Showing {visibleLabels.length} of {data.labels.length} orders
+                for {date}.
+              </div>
+            </div>
 
-                <div style={{ fontSize: 14, marginBottom: 8 }}>
-                  Customer: {row.customerName || "—"} | City: {row.city || "—"} | ZIP: {row.zip || "—"} | Country: {row.country || "—"}
-                </div>
-
-                <div style={{ fontSize: 14, marginBottom: 8 }}>
-                  Pieces: {row.pieces} | COD: {row.isCOD ? "YES" : "NO"} | Pickup date: {row.pickupDate}
-                </div>
-
-                {row.shipmentNumbers?.length ? (
-                  <div style={{ fontSize: 14, marginBottom: 12 }}>
-                    Shipments: {row.shipmentNumbers.join(", ")}
-                  </div>
-                ) : null}
-
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {(row.labels || []).map((l, idx) => (
-                    <a
-                      key={l.number}
-                      href={addInlineParam(l.url)}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{
-                        padding: "8px 12px",
-                        border: "1px solid #ccc",
-                        borderRadius: 6,
-                        textDecoration: "none",
-                      }}
-                    >
-                      {row.labels.length > 1 ? `Print label #${idx + 1}` : "Print label"}
-                    </a>
-                  ))}
-
-                  <button
-                    onClick={() => handleDelete(row.orderId, row.voucherNumber)}
+            {visibleLabels.length ? (
+              <div style={{ display: "grid", gap: 12 }}>
+                {visibleLabels.map((row) => (
+                  <div
+                    key={row.orderId + row.voucherNumber}
                     style={{
-                      padding: "8px 12px",
-                      border: "1px solid #d99",
-                      borderRadius: 6,
-                      background: "#fff7f7",
+                      border: "1px solid #ddd",
+                      borderRadius: 8,
+                      padding: 16,
+                      background: "#fff",
                     }}
                   >
-                    Delete voucher
-                  </button>
-                </div>
+                    <div style={{ marginBottom: 8 }}>
+                      <strong>{row.orderName}</strong> — Voucher:{" "}
+                      <strong>{row.voucherNumber}</strong>
+                    </div>
+
+                    <div style={{ fontSize: 14, marginBottom: 8 }}>
+                      Customer: {row.customerName || "—"} | City:{" "}
+                      {row.city || "—"} | ZIP: {row.zip || "—"} | Country:{" "}
+                      {row.country || "—"}
+                    </div>
+
+                    <div style={{ fontSize: 14, marginBottom: 8 }}>
+                      Pieces: {row.pieces} | COD: {row.isCOD ? "YES" : "NO"} |
+                      Pickup date: {row.pickupDate}
+                    </div>
+
+                    {row.shipmentNumbers?.length ? (
+                      <div style={{ fontSize: 14, marginBottom: 12 }}>
+                        Shipments: {row.shipmentNumbers.join(", ")}
+                      </div>
+                    ) : null}
+
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {(row.labels || []).map((l, idx) => (
+                        <a
+                          key={l.number}
+                          href={addInlineParam(l.url)}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{
+                            padding: "8px 12px",
+                            border: "1px solid #ccc",
+                            borderRadius: 6,
+                            textDecoration: "none",
+                          }}
+                        >
+                          {row.labels.length > 1
+                            ? `Print label #${idx + 1}`
+                            : "Print label"}
+                        </a>
+                      ))}
+
+                      <button
+                        onClick={() =>
+                          handleDelete(row.orderId, row.voucherNumber)
+                        }
+                        style={{
+                          padding: "8px 12px",
+                          border: "1px solid #d99",
+                          borderRadius: 6,
+                          background: "#fff7f7",
+                        }}
+                      >
+                        Delete voucher
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            ) : (
+              <p>No orders for this date match your search.</p>
+            )}
+          </>
         )
       ) : null}
 
@@ -353,7 +430,8 @@ export default function AcsDailyLabelsPage() {
                 <strong>PickupList_No:</strong> {pl.pickupListNo}
               </div>
               <div style={{ fontSize: 14, marginBottom: 12 }}>
-                Created at: {pl.pickupListDateTime || "—"} | Vouchers: {pl.listVouchersCount}
+                Created at: {pl.pickupListDateTime || "—"} | Vouchers:{" "}
+                {pl.listVouchersCount}
               </div>
 
               <a
@@ -388,11 +466,19 @@ export default function AcsDailyLabelsPage() {
         </h2>
 
         <p style={{ marginTop: 0, color: "#555", fontSize: 14 }}>
-          Enter any ACS voucher number and delete it directly from ACS.
-          This manual action does not clear Shopify metafields unless the voucher is also deleted through an order row above.
+          Enter any ACS voucher number and delete it directly from ACS. This
+          manual action does not clear Shopify metafields unless the voucher is
+          also deleted through an order row above.
         </p>
 
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            flexWrap: "wrap",
+            alignItems: "center",
+          }}
+        >
           <input
             type="text"
             value={manualVoucherNo}

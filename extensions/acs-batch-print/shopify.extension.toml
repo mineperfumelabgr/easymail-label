@@ -48,7 +48,7 @@ target = "admin.order-index.selection-print-action.render"
 
 # Order index, detail pages and order fulfilled card
 # - admin.order-index.action.render
-# - admin.order-index.selection-action.render
+# - admin.order-index.selection-print-action.render
 # - admin.order-details.action.render
 # - admin.order-fulfilled-card.action.render
 
