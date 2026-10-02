@@ -14,7 +14,9 @@ export async function action({ request }) {
       where: { isOnline: false },
       select: { shop: true },
     });
-    const distinct = [...new Set(sessions.map((session) => session.shop))];
+    const allShops = [...new Set(sessions.map((session) => session.shop))];
+    const ignoredShops = allShops.filter((shop) => /-dev\.myshopify\.com$/i.test(shop));
+    const distinct = allShops.filter((shop) => !/-dev\.myshopify\.com$/i.test(shop));
     const shops = [];
     for (const shop of distinct) {
       try {
@@ -25,7 +27,7 @@ export async function action({ request }) {
         shops.push({ shop, error: error?.message || "Sync failed" });
       }
     }
-    return Response.json({ success: true, shops });
+    return Response.json({ success: true, shops, ignoredShops });
   } catch (error) {
     console.error("ACS TRACKING CRON ERROR:", error);
     return Response.json({ success: false, message: error?.message || "Scheduled sync failed" }, { status: 500 });

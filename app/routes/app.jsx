@@ -19,6 +19,7 @@ export default function App() {
         <s-link href="/app">Home</s-link>
         <s-link href="/app/acs-vouchers">ACS Daily Labels</s-link>
         <s-link href="/app/acs-tracking">ACS Tracking</s-link>
+        <s-link href="/app/acs-tracking-settings">ACS Tag Settings</s-link>
         <s-link href="/app/vouchers">EasyMail Daily Labels</s-link>
         <s-link href="/app/employees">Dipendenti</s-link>
         <s-link href="/app/additional">Additional page</s-link>

@@ -1,156 +1,200 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useFetcher, useLoaderData, useLocation, useNavigate, useRevalidator } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
-const FILTERS = [
-  ["ALL", "Tutte"],
-  ["DELIVERY_PROBLEM", "Problemi"],
-  ["DELIVERY_ATTEMPTED", "Tentativo fallito"],
-  ["DELIVERY_DELAYED", "Riprogrammate"],
-  ["IN_TRANSIT", "In transito"],
-  ["OUT_FOR_DELIVERY", "In consegna"],
-  ["READY_FOR_PICKUP", "Da ritirare"],
-  ["RETURNING", "In restituzione"],
-  ["RETURNED", "Restituite"],
-  ["DELIVERED", "Consegnate"],
-  ["UNKNOWN", "Da verificare"],
-  ["SYNC_ERROR", "Errori ACS"],
-];
-const ALERT_STATUSES = new Set(["DELIVERY_PROBLEM", "DELIVERY_ATTEMPTED", "DELIVERY_DELAYED", "RETURNING", "RETURNED", "SYNC_ERROR"]);
+const ALERT_STATUSES = ["DELIVERY_PROBLEM", "DELIVERY_ATTEMPTED", "DELIVERY_DELAYED"];
+const FILTERS = ["ALL", "ALERTS", "RETURNS", "PICKUP", "DELIVERY", "TRANSIT", "DELIVERED", "SYNC_ERROR"];
+const STATUS_LABELS = {
+  en: {
+    DELIVERY_PROBLEM: "Delivery problem", DELIVERY_ATTEMPTED: "Delivery attempted", DELIVERY_DELAYED: "Delivery delayed",
+    IN_TRANSIT: "In transit", OUT_FOR_DELIVERY: "Out for delivery", READY_FOR_PICKUP: "Ready for pickup",
+    RETURNING: "Returning to sender", RETURNED: "Returned to sender", DELIVERED: "Delivered to recipient",
+    UNKNOWN: "Check ACS status", SYNC_ERROR: "Not synced yet",
+  },
+  el: {
+    DELIVERY_PROBLEM: "Πρόβλημα παράδοσης", DELIVERY_ATTEMPTED: "Ανεπιτυχής προσπάθεια", DELIVERY_DELAYED: "Καθυστέρηση παράδοσης",
+    IN_TRANSIT: "Σε μεταφορά", OUT_FOR_DELIVERY: "Προς παράδοση", READY_FOR_PICKUP: "Για παραλαβή",
+    RETURNING: "Επιστροφή στον αποστολέα", RETURNED: "Επιστράφηκε στον αποστολέα", DELIVERED: "Παραδόθηκε στον παραλήπτη",
+    UNKNOWN: "Έλεγχος κατάστασης ACS", SYNC_ERROR: "Δεν έχει συγχρονιστεί",
+  },
+};
+const COPY = {
+  en: {
+    title: "ACS shipment dashboard", subtitle: "ACS shipment status and Shopify fulfillment are shown separately.",
+    total: "Tracked shipments", attention: "Needs attention", returns: "Returns", delivery: "Out for delivery", delivered: "Delivered",
+    search: "Search tracking, order or recipient", searchButton: "Search", refresh: "Refresh ACS tracking", refreshing: "Checking ACS…",
+    all: "All", alerts: "Issues", returnsFilter: "Returns", pickup: "Pickup", deliveryFilter: "Out for delivery", transit: "In transit", deliveredFilter: "Delivered", syncError: "Sync issues",
+    status: "ACS status", fulfillment: "Shopify fulfillment", order: "Order / recipient", voucher: "ACS tracking", checkpoint: "Latest ACS update", checked: "Last checked",
+    created: "Created", deliveredAt: "Delivered", age: "Open for", days: "days", day: "day", syncIssue: "Sync issue", noResults: "No shipments match this search or filter.", empty: "No ACS shipments synced yet. Use Refresh ACS tracking to start.",
+    deliveredRule: "Delivered is recorded only when ACS confirms delivery flags. SMS and message checkpoints are not proof of delivery.",
+    syncResult: (r) => `Checked ${r.checked} vouchers · ${r.created} Shopify events · ${r.tagsAdded || 0} order tags added · ${r.alerts} shipments need attention${r.errors?.length ? ` · ${r.errors.length} sync errors` : ""}${r.tagErrors?.length ? ` · ${r.tagErrors.length} tag errors` : ""}.`,
+    wait: (seconds) => `ACS is checking shipments… ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}. Larger batches can take a few minutes.`,
+    error: "Could not refresh ACS tracking.", language: "Language", en: "English", el: "Ελληνικά",
+  },
+  el: {
+    title: "Πίνακας αποστολών ACS", subtitle: "Η κατάσταση ACS και η εκπλήρωση παραγγελίας Shopify εμφανίζονται ξεχωριστά.",
+    total: "Παρακολουθούμενες", attention: "Χρειάζονται προσοχή", returns: "Επιστροφές", delivery: "Προς παράδοση", delivered: "Παραδόθηκαν",
+    search: "Αναζήτηση tracking, παραγγελίας ή παραλήπτη", searchButton: "Αναζήτηση", refresh: "Ανανέωση tracking ACS", refreshing: "Έλεγχος ACS…",
+    all: "Όλες", alerts: "Προβλήματα", returnsFilter: "Επιστροφές", pickup: "Παραλαβή", deliveryFilter: "Προς παράδοση", transit: "Σε μεταφορά", deliveredFilter: "Παραδόθηκαν", syncError: "Σφάλματα συγχρονισμού",
+    status: "Κατάσταση ACS", fulfillment: "Εκπλήρωση Shopify", order: "Παραγγελία / παραλήπτης", voucher: "Tracking ACS", checkpoint: "Τελευταία ενημέρωση ACS", checked: "Τελευταίος έλεγχος",
+    created: "Δημιουργήθηκε", deliveredAt: "Παραδόθηκε", age: "Ανοιχτό για", days: "ημέρες", day: "ημέρα", syncIssue: "Σφάλμα συγχρονισμού", noResults: "Δεν βρέθηκαν αποστολές για την αναζήτηση ή το φίλτρο.", empty: "Δεν υπάρχουν συγχρονισμένες αποστολές ACS. Πατήστε Ανανέωση tracking ACS.",
+    deliveredRule: "Η παράδοση επιβεβαιώνεται μόνο από τα στοιχεία παράδοσης της ACS. Τα SMS και τα μηνύματα δεν θεωρούνται απόδειξη παράδοσης.",
+    syncResult: (r) => `Ελέγχθηκαν ${r.checked} tracking · ${r.created} ενημερώσεις Shopify · ${r.tagsAdded || 0} tags παραγγελίας · ${r.alerts} αποστολές χρειάζονται προσοχή${r.errors?.length ? ` · ${r.errors.length} σφάλματα` : ""}${r.tagErrors?.length ? ` · ${r.tagErrors.length} σφάλματα tag` : ""}.`,
+    wait: (seconds) => `Έλεγχος αποστολών ACS… ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}. Μεγάλες λίστες μπορεί να χρειαστούν λίγα λεπτά.`,
+    error: "Δεν ήταν δυνατή η ανανέωση του tracking ACS.", language: "Γλώσσα", en: "English", el: "Ελληνικά",
+  },
+};
+
+function filterWhere(filter) {
+  if (filter === "ALERTS") return { status: { in: ALERT_STATUSES } };
+  if (filter === "RETURNS") return { status: { in: ["RETURNING", "RETURNED"] } };
+  if (filter === "PICKUP") return { status: "READY_FOR_PICKUP" };
+  if (filter === "DELIVERY") return { status: "OUT_FOR_DELIVERY" };
+  if (filter === "TRANSIT") return { status: "IN_TRANSIT" };
+  if (filter === "DELIVERED") return { status: "DELIVERED" };
+  if (filter === "SYNC_ERROR") return { error: { not: null } };
+  return {};
+}
 
 export async function loader({ request }) {
   const { session } = await authenticate.admin(request);
   const url = new URL(request.url);
   const q = (url.searchParams.get("q") || "").trim().slice(0, 100);
-  const filter = FILTERS.some(([key]) => key === url.searchParams.get("status")) ? (url.searchParams.get("status") || "ALL") : "ALL";
-  const where = { shop: session.shop };
-  if (filter === "SYNC_ERROR") where.error = { not: null };
-  else if (filter !== "ALL") where.status = filter;
-  if (q) {
-    where.OR = [
-      { voucherNo: { contains: q, mode: "insensitive" } },
-      { orderName: { contains: q, mode: "insensitive" } },
-      { recipientName: { contains: q, mode: "insensitive" } },
-    ];
-  }
-  const [shipments, grouped, syncErrorCount] = await Promise.all([
-    prisma.acsTrackingSnapshot.findMany({ where, orderBy: { lastCheckedAt: "desc" }, take: 500 }),
+  const requestedFilter = url.searchParams.get("status") || "ALL";
+  const filter = FILTERS.includes(requestedFilter) ? requestedFilter : "ALL";
+  const lang = url.searchParams.get("lang") === "el" ? "el" : "en";
+  const where = { shop: session.shop, ...filterWhere(filter) };
+  if (q) where.OR = [
+    { voucherNo: { contains: q, mode: "insensitive" } },
+    { orderName: { contains: q, mode: "insensitive" } },
+    { recipientName: { contains: q, mode: "insensitive" } },
+  ];
+  const [shipments, grouped, syncErrorCount, alertSyncErrors, totalCount] = await Promise.all([
+    prisma.acsTrackingSnapshot.findMany({ where, orderBy: [{ error: "desc" }, { lastCheckedAt: "desc" }], take: 500 }),
     prisma.acsTrackingSnapshot.groupBy({ by: ["status"], where: { shop: session.shop }, _count: { _all: true } }),
     prisma.acsTrackingSnapshot.count({ where: { shop: session.shop, error: { not: null } } }),
+    prisma.acsTrackingSnapshot.count({ where: { shop: session.shop, error: { not: null }, status: { in: ALERT_STATUSES } } }),
+    prisma.acsTrackingSnapshot.count({ where: { shop: session.shop } }),
   ]);
-  const priority = { RETURNING: 0, DELIVERY_PROBLEM: 1, DELIVERY_ATTEMPTED: 2, DELIVERY_DELAYED: 3, SYNC_ERROR: 4, READY_FOR_PICKUP: 5, OUT_FOR_DELIVERY: 6, IN_TRANSIT: 7, UNKNOWN: 8, RETURNED: 9, DELIVERED: 10 };
+  const priority = { RETURNING: 0, DELIVERY_PROBLEM: 1, DELIVERY_ATTEMPTED: 2, DELIVERY_DELAYED: 3, READY_FOR_PICKUP: 4, OUT_FOR_DELIVERY: 5, IN_TRANSIT: 6, UNKNOWN: 7, RETURNED: 8, DELIVERED: 9, SYNC_ERROR: 10 };
   shipments.sort((a, b) => (priority[a.status] ?? 10) - (priority[b.status] ?? 10) || new Date(b.lastCheckedAt) - new Date(a.lastCheckedAt));
   const counts = Object.fromEntries(grouped.map((row) => [row.status, row._count._all]));
-  return { shipments, counts, q, filter, shop: session.shop, syncErrorCount };
+  return { shipments, counts, q, filter, shop: session.shop, syncErrorCount, alertSyncErrors, totalCount, lang };
 }
 
-function dateLabel(value) {
+function dateLabel(value, lang) {
   if (!value) return "—";
-  return new Intl.DateTimeFormat("it-IT", { dateStyle: "short", timeStyle: "short", timeZone: "Europe/Athens" }).format(new Date(value));
+  return new Intl.DateTimeFormat(lang === "el" ? "el-GR" : "en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Europe/Athens" }).format(new Date(value));
+}
+function ageDays(value) {
+  if (!value) return null;
+  return Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 86400000));
+}
+function fulfillmentLabel(status, lang) {
+  if (!status) return "—";
+  const names = {
+    en: { SUCCESS: "Fulfilled", FULFILLED: "Fulfilled", PARTIAL: "Partially fulfilled", RESTOCKED: "Restocked", OPEN: "Open", CANCELLED: "Cancelled", IN_TRANSIT: "In transit", DELIVERED: "Delivered", OUT_FOR_DELIVERY: "Out for delivery", FAILURE: "Delivery failure", READY_FOR_PICKUP: "Ready for pickup", PICKED_UP: "Picked up", DELAYED: "Delayed", ATTEMPTED_DELIVERY: "Attempted delivery" },
+    el: { SUCCESS: "Εκπληρώθηκε", FULFILLED: "Εκπληρώθηκε", PARTIAL: "Μερική εκπλήρωση", RESTOCKED: "Επιστράφηκε στο απόθεμα", OPEN: "Ανοιχτή", CANCELLED: "Ακυρώθηκε", IN_TRANSIT: "Σε μεταφορά", DELIVERED: "Παραδόθηκε", OUT_FOR_DELIVERY: "Προς παράδοση", FAILURE: "Αποτυχία παράδοσης", READY_FOR_PICKUP: "Για παραλαβή", PICKED_UP: "Παραλήφθηκε", DELAYED: "Καθυστέρηση", ATTEMPTED_DELIVERY: "Ανεπιτυχής προσπάθεια" },
+  };
+  return names[lang][status] || status.replaceAll("_", " ").toLowerCase();
 }
 
 export default function AcsTrackingPage() {
-  const { shipments, counts, q: initialQuery, filter: initialFilter, shop, syncErrorCount } = useLoaderData();
+  const { shipments, counts, q: initialQuery, filter: initialFilter, shop, syncErrorCount, alertSyncErrors, totalCount, lang } = useLoaderData();
+  const t = COPY[lang];
   const fetcher = useFetcher();
   const location = useLocation();
   const navigate = useNavigate();
   const revalidator = useRevalidator();
   const [query, setQuery] = useState(initialQuery);
+  const [syncStartedAt, setSyncStartedAt] = useState(null);
+  const [now, setNow] = useState(Date.now());
   const busy = fetcher.state !== "idle";
   const result = fetcher.data;
-  const allCount = useMemo(() => Object.values(counts).reduce((sum, value) => sum + value, 0), [counts]);
-  const alertCount = useMemo(() => Object.entries(counts).reduce((sum, [key, value]) => sum + (key !== "SYNC_ERROR" && ALERT_STATUSES.has(key) ? value : 0), syncErrorCount), [counts, syncErrorCount]);
+  const elapsed = syncStartedAt ? Math.max(0, Math.floor((now - syncStartedAt) / 1000)) : 0;
+  const attentionCount = ALERT_STATUSES.reduce((sum, status) => sum + (counts[status] || 0), 0) + syncErrorCount - alertSyncErrors;
+  const openReturns = (counts.RETURNING || 0) + (counts.RETURNED || 0);
 
   useEffect(() => {
+    if (fetcher.state === "idle" && syncStartedAt) setSyncStartedAt(null);
     if (fetcher.state === "idle" && result?.success) revalidator.revalidate();
-  }, [fetcher.state, result?.success, revalidator]);
-  useEffect(() => setQuery(initialQuery), [initialQuery]);
+  }, [fetcher.state, result?.success, revalidator, syncStartedAt]);
+  useEffect(() => { setQuery(initialQuery); }, [initialQuery]);
+  useEffect(() => {
+    if (!busy) return undefined;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [busy]);
 
-  function setFilter(status) {
+  function navigateWithParams(updates) {
     const params = new URLSearchParams(location.search);
-    if (query) params.set("q", query); else params.delete("q");
-    if (status === "ALL") params.delete("status"); else params.set("status", status);
+    for (const [key, value] of Object.entries(updates)) {
+      if (value) params.set(key, value); else params.delete(key);
+    }
     navigate(`${location.pathname}?${params.toString()}`);
+  }
+  function doSearch(event) {
+    event.preventDefault();
+    navigateWithParams({ q: query.trim() });
   }
 
   return (
-    <s-page heading="ACS Tracking">
+    <s-page heading={t.title}>
       <s-section>
-        <div className="tracking-summary">
-          <div><span>Spedizioni monitorate</span><strong>{allCount}</strong></div>
-          <div className={alertCount ? "tracking-alert" : ""}><span>Richiedono attenzione</span><strong>{alertCount}</strong></div>
-          <div><span>In transito</span><strong>{counts.IN_TRANSIT || 0}</strong></div>
-          <div><span>In consegna</span><strong>{counts.OUT_FOR_DELIVERY || 0}</strong></div>
-          <div><span>Da ritirare</span><strong>{counts.READY_FOR_PICKUP || 0}</strong></div>
-          <div><span>In restituzione</span><strong>{counts.RETURNING || 0}</strong></div>
-          <div><span>Restituite</span><strong>{counts.RETURNED || 0}</strong></div>
-          <div><span>Consegnate</span><strong>{counts.DELIVERED || 0}</strong></div>
-          <div className={syncErrorCount ? "tracking-alert" : ""}><span>Errori aggiornamento</span><strong>{syncErrorCount}</strong></div>
+        <div className="acs-head"><div><p>{t.subtitle}</p><p className="acs-note">{t.deliveredRule}</p></div><div className="acs-lang" aria-label={t.language}><span>{t.language}</span><button type="button" className={lang === "en" ? "selected" : ""} onClick={() => navigateWithParams({ lang: "en" })}>{t.en}</button><button type="button" className={lang === "el" ? "selected" : ""} onClick={() => navigateWithParams({ lang: "el" })}>{t.el}</button></div></div>
+        <div className="acs-kpis">
+          <div><span>{t.total}</span><strong>{totalCount}</strong></div>
+          <div className={attentionCount ? "attention" : ""}><span>{t.attention}</span><strong>{attentionCount}</strong></div>
+          <div><span>{t.returns}</span><strong>{openReturns}</strong></div>
+          <div><span>{t.delivery}</span><strong>{counts.OUT_FOR_DELIVERY || 0}</strong></div>
+          <div><span>{t.delivered}</span><strong>{counts.DELIVERED || 0}</strong></div>
         </div>
-        {alertCount ? <p className="tracking-alert-banner" role="alert">Attenzione: {alertCount} spedizioni hanno problemi, tentativi falliti, aggiornamenti ACS non riusciti o stanno tornando al mittente.</p> : null}
-        <p className="tracking-note">Una spedizione risulta consegnata solo se ACS conferma lo stato 4 con i flag di consegna corretti. SMS e messaggi al destinatario non vengono interpretati come prova di consegna.</p>
-        <div className="tracking-toolbar">
-          <form onSubmit={(event) => {
-            event.preventDefault();
-            const params = new URLSearchParams(location.search);
-            if (query.trim()) params.set("q", query.trim()); else params.delete("q");
-            navigate(`${location.pathname}?${params.toString()}`);
-          }}>
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cerca codice ACS, nome o ordine Shopify" aria-label="Cerca spedizioni" />
-            <button type="submit">Cerca</button>
+        <div className="acs-toolbar">
+          <form onSubmit={doSearch}>
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t.search} aria-label={t.search} />
+            <button type="submit">{t.searchButton}</button>
           </form>
-          <s-button variant="primary" disabled={busy} onClick={() => fetcher.submit({}, { method: "post", action: `/api/acs-tracking-sync${location.search}` })}>
-            {busy ? "Aggiornamento in corso…" : "Aggiorna tracking ACS"}
+          <s-button variant="primary" disabled={busy} onClick={() => { setSyncStartedAt(Date.now()); setNow(Date.now()); fetcher.submit({}, { method: "post", action: `/api/acs-tracking-sync${location.search}` }); }}>
+            {busy ? t.refreshing : t.refresh}
           </s-button>
         </div>
-        {result?.success ? <p role="status">Controllati {result.checked} voucher · {result.created} eventi inviati a Shopify · {result.alerts} spedizioni da verificare{result.errors?.length ? ` · ${result.errors.length} errori` : ""}.</p> : null}
-        {result && !result.success ? <p role="alert">{result.message}</p> : null}
+        {busy ? <p className="acs-wait" role="status">{t.wait(elapsed)}</p> : null}
+        {result?.success ? <p role="status" className="acs-result">{t.syncResult(result)}</p> : null}
+        {result && !result.success ? <p role="alert">{result.message || t.error}</p> : null}
       </s-section>
-
       <s-section>
-        <div className="tracking-filters" aria-label="Filtri spedizioni">
-          {FILTERS.map(([key, label]) => (
-            <button type="button" key={key} className={initialFilter === key ? "active" : ""} onClick={() => setFilter(key)}>
-              {label}{key === "ALL" ? ` (${allCount})` : ` (${key === "SYNC_ERROR" ? syncErrorCount : counts[key] || 0})`}
-            </button>
-          ))}
+        <div className="acs-filters" aria-label={t.title}>
+          {FILTERS.map((key) => {
+            const names = { ALL: t.all, ALERTS: t.alerts, RETURNS: t.returnsFilter, PICKUP: t.pickup, DELIVERY: t.deliveryFilter, TRANSIT: t.transit, DELIVERED: t.deliveredFilter, SYNC_ERROR: t.syncError };
+            const n = key === "ALL" ? totalCount : key === "ALERTS" ? ALERT_STATUSES.reduce((sum, status) => sum + (counts[status] || 0), 0) : key === "RETURNS" ? openReturns : key === "SYNC_ERROR" ? syncErrorCount : key === "PICKUP" ? counts.READY_FOR_PICKUP || 0 : key === "DELIVERY" ? counts.OUT_FOR_DELIVERY || 0 : key === "TRANSIT" ? counts.IN_TRANSIT || 0 : counts.DELIVERED || 0;
+            return <button type="button" key={key} className={initialFilter === key ? "active" : ""} onClick={() => navigateWithParams({ status: key === "ALL" ? "" : key })}>{names[key]} <strong>{n}</strong></button>;
+          })}
         </div>
-        {shipments.length ? (
-          <div className="tracking-table-wrap">
-            <table className="tracking-table">
-              <thead><tr><th>Stato</th><th>Ordine / destinatario</th><th>Voucher ACS</th><th>Ultimo aggiornamento ACS</th><th>Ultimo checkpoint</th><th>Verificato</th></tr></thead>
-              <tbody>{shipments.map((item) => {
-                const critical = ALERT_STATUSES.has(item.status) || Boolean(item.error);
-                const orderNumber = item.orderId.split("/").pop();
-                return <tr key={item.id} className={critical ? "tracking-row-alert" : ""}>
-                  <td><span className={`tracking-badge ${critical ? "critical" : ""}`}>{item.statusLabel}</span>{item.error ? <small className="tracking-error">{item.error}</small> : null}</td>
-                  <td><a href={`https://${shop}/admin/orders/${orderNumber}`} target="_top" rel="noreferrer">{item.orderName}</a><small>{item.recipientName || "Destinatario non indicato"}</small></td>
-                  <td><strong>{item.voucherNo}</strong>{item.reasonCode ? <small>Motivo ACS: {item.reasonCode}</small> : null}</td>
-                  <td>{dateLabel(item.lastEventAt)}{item.lastLocation ? <small>{item.lastLocation}</small> : null}</td>
-                  <td>{item.lastCheckpoint || "—"}</td>
-                  <td>{dateLabel(item.lastCheckedAt)}</td>
-                </tr>;
-              })}</tbody>
-            </table>
-          </div>
-        ) : <p>{allCount ? "Nessuna spedizione corrisponde alla ricerca o al filtro." : "Nessuna spedizione ancora sincronizzata. Premi “Aggiorna tracking ACS” per importare stati ed eventi delle spedizioni ACS recenti."}</p>}
+        {shipments.length ? <div className="acs-table-wrap"><table className="acs-table">
+          <thead><tr><th>{t.status}</th><th>{t.fulfillment}</th><th>{t.order}</th><th>{t.voucher}</th><th>{t.checkpoint}</th><th>{t.checked}</th></tr></thead>
+          <tbody>{shipments.map((item) => {
+            const critical = ALERT_STATUSES.includes(item.status) || item.status === "RETURNING" || item.status === "RETURNED" || Boolean(item.error);
+            const orderNumber = item.orderId.split("/").pop();
+            const age = item.fulfillmentCreatedAt && !item.fulfillmentDeliveredAt ? ageDays(item.fulfillmentCreatedAt) : null;
+            return <tr key={item.id} className={critical ? "needs-attention" : ""}>
+              <td><span className={`status-pill ${critical ? "critical" : ""}`}>{STATUS_LABELS[lang][item.status] || item.statusLabel}</span>{item.error ? <small className="sync-error">{t.syncIssue}: {item.error}</small> : null}</td>
+              <td><strong>{fulfillmentLabel(item.fulfillmentStatus, lang)}</strong><small>{t.created}: {dateLabel(item.fulfillmentCreatedAt, lang)}</small>{item.fulfillmentDeliveredAt ? <small>{t.deliveredAt}: {dateLabel(item.fulfillmentDeliveredAt, lang)}</small> : age !== null ? <small>{t.age} {age} {age === 1 ? t.day : t.days}</small> : null}</td>
+              <td><a href={`https://${shop}/admin/orders/${orderNumber}`} target="_top" rel="noreferrer">{item.orderName}</a><small>{item.recipientName || "—"}</small></td>
+              <td><strong>{item.voucherNo}</strong>{item.reasonCode ? <small>{item.reasonCode}</small> : null}</td>
+              <td>{item.lastCheckpoint || "—"}{item.lastLocation ? <small>{item.lastLocation}</small> : null}<small>{dateLabel(item.lastEventAt, lang)}</small></td>
+              <td>{dateLabel(item.lastCheckedAt, lang)}</td>
+            </tr>;
+          })}</tbody>
+        </table></div> : <p>{totalCount ? t.noResults : t.empty}</p>}
       </s-section>
-
       <style>{`
-        .tracking-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:18px}
-        .tracking-summary>div{border:1px solid #e5e1dc;border-radius:10px;padding:12px 14px;background:#fff;display:flex;flex-direction:column;gap:5px}
-        .tracking-summary span,.tracking-table small{color:#706d69;font-size:12px}.tracking-summary strong{font-size:21px;color:#282522}
-        .tracking-summary .tracking-alert{border-color:#cf684c;background:#fff7f4}.tracking-summary .tracking-alert strong{color:#a63d25}
-        .tracking-alert-banner{padding:10px 13px;border-left:4px solid #bd5336;background:#fff3ee;color:#8d3621;border-radius:5px}
-        .tracking-note{font-size:12px;color:#706d69}
-        .tracking-toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:12px 0}
-        .tracking-toolbar form{display:flex;gap:8px;flex:1;min-width:280px}.tracking-toolbar input{flex:1;min-width:150px;padding:10px 12px;border:1px solid #c8c5c1;border-radius:8px;font:inherit}
-        .tracking-toolbar form button,.tracking-filters button{background:#fff;border:1px solid #d9d5d1;border-radius:999px;padding:8px 13px;font:inherit;cursor:pointer}
-        .tracking-filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}.tracking-filters button.active{background:#7b573f;color:#fff;border-color:#7b573f}
-        .tracking-table-wrap{overflow-x:auto}.tracking-table{width:100%;border-collapse:collapse;font-size:13px}.tracking-table th,.tracking-table td{padding:11px 9px;border-bottom:1px solid #ece9e6;text-align:left;vertical-align:top;white-space:nowrap}.tracking-table th{font-weight:600;color:#605b56}
-        .tracking-table td small{display:block;margin-top:4px;white-space:normal;max-width:230px}.tracking-table a{color:#59412f;font-weight:600}.tracking-row-alert{background:#fffaf8}
-        .tracking-badge{display:inline-block;border:1px solid #d5d0ca;border-radius:999px;padding:4px 8px;white-space:normal}.tracking-badge.critical{border-color:#cc765a;color:#9b3924;background:#fff1eb}.tracking-error{color:#a33b25}
+        .acs-head{display:flex;justify-content:space-between;gap:20px;align-items:flex-start}.acs-head p{margin-top:0}.acs-note{font-size:12px;color:#716d68}.acs-lang{display:flex;align-items:center;gap:6px;white-space:nowrap;color:#6b6762;font-size:12px}.acs-lang button,.acs-toolbar form button,.acs-filters button{border:1px solid #dedad6;background:#fff;border-radius:7px;padding:8px 11px;font:inherit;cursor:pointer}.acs-lang button.selected{background:#614a38;color:white;border-color:#614a38}
+        .acs-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px;margin:18px 0}.acs-kpis>div{border:1px solid #e5e1dc;border-radius:10px;padding:12px 14px;background:#fff;display:flex;flex-direction:column;gap:5px}.acs-kpis span,.acs-table small{color:#706d69;font-size:12px}.acs-kpis strong{font-size:21px;color:#282522}.acs-kpis .attention{border-color:#cf684c;background:#fff7f4}.acs-kpis .attention strong{color:#a63d25}
+        .acs-toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:12px 0}.acs-toolbar form{display:flex;gap:8px;flex:1;min-width:270px}.acs-toolbar input{flex:1;min-width:140px;padding:10px 12px;border:1px solid #c8c5c1;border-radius:8px;font:inherit}.acs-wait{color:#755b40}.acs-result{color:#315f35}
+        .acs-filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}.acs-filters button{border-radius:999px}.acs-filters button.active{background:#614a38;color:white;border-color:#614a38}.acs-filters strong{margin-left:4px}
+        .acs-table-wrap{overflow-x:auto}.acs-table{width:100%;border-collapse:collapse;font-size:13px}.acs-table th,.acs-table td{padding:11px 9px;border-bottom:1px solid #ece9e6;text-align:left;vertical-align:top}.acs-table th{font-weight:600;color:#605b56;white-space:nowrap}.acs-table td small{display:block;margin-top:4px;white-space:normal;min-width:110px;max-width:260px}.acs-table a{color:#59412f;font-weight:600}.acs-table tr.needs-attention{background:#fffaf8}.status-pill{display:inline-block;border:1px solid #d5d0ca;border-radius:999px;padding:4px 8px;white-space:normal}.status-pill.critical{border-color:#cc765a;color:#9b3924;background:#fff1eb}.sync-error{color:#a33b25!important;font-weight:600}
+        @media(max-width:700px){.acs-head{flex-direction:column}.acs-lang{align-self:flex-end}.acs-table{min-width:860px}}
       `}</style>
     </s-page>
   );

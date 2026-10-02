@@ -6,11 +6,12 @@ const ORDER_QUERY = `#graphql
     orders(first: 50, after: $after, sortKey: CREATED_AT, reverse: true) {
       pageInfo { hasNextPage endCursor }
       edges { node {
-        id name
+          id name
         shippingAddress { name }
+        tags
         metafield(namespace: "acs", key: "current_numbers") { value }
         fulfillments(first: 10) {
-          id status trackingInfo { company number }
+          id status displayStatus createdAt deliveredAt trackingInfo { company number }
           events(first: 100) { edges { node { status happenedAt message } } }
         }
       } }
@@ -22,6 +23,14 @@ const CREATE_EVENT = `#graphql
   mutation CreateAcsTrackingEvent($event: FulfillmentEventInput!) {
     fulfillmentEventCreate(fulfillmentEvent: $event) {
       fulfillmentEvent { id status happenedAt message }
+      userErrors { field message }
+    }
+  }
+`;
+
+const ADD_ORDER_TAG = `#graphql
+  mutation AddAcsStatusTag($id: ID!, $tags: [String!]!) {
+    tagsAdd(id: $id, tags: $tags) {
       userErrors { field message }
     }
   }
@@ -120,28 +129,60 @@ export async function runAcsTrackingSync(admin, shop) {
       after = connection.pageInfo.endCursor;
     }
 
-    const result = { checked: 0, created: 0, skipped: 0, snapshots: 0, alerts: 0, errors: [] };
-    for (const order of orders) {
-      const fulfillment = (order.fulfillments || []).find((f) =>
-        (f.trackingInfo || []).some((t) => /ACS/i.test(t.company || ""))
-      );
-      if (!fulfillment || fulfillment.status === "CANCELLED") continue;
-      let numbers = [];
+    const result = { checked: 0, created: 0, skipped: 0, snapshots: 0, alerts: 0, tagsAdded: 0, tagErrors: [], errors: [] };
+    const tagRules = await prisma.acsTrackingTagRule.findMany({ where: { shop, enabled: true } });
+    const tagByStatus = new Map(tagRules.filter((rule) => rule.tag?.trim()).map((rule) => [rule.status, rule.tag.trim()]));
+    async function addStatusTag(order, status, orderTags, voucher) {
+      const statusTag = tagByStatus.get(status);
+      if (!statusTag || orderTags.has(statusTag)) return;
       try {
-        numbers = JSON.parse(order.metafield?.value || "[]").map(String);
-      } catch {
-        // Fall back to tracking numbers stored directly on the fulfillment.
+        const tagData = await graph(admin, ADD_ORDER_TAG, { id: order.id, tags: [statusTag] });
+        const tagErrors = tagData.tagsAdd.userErrors || [];
+        if (tagErrors.length) throw new Error(tagErrors.map((item) => item.message).join("; "));
+        orderTags.add(statusTag);
+        result.tagsAdded++;
+      } catch (tagError) {
+        result.tagErrors.push({ order: order.name, voucher, tag: statusTag, message: tagError?.message || "Could not add ACS status tag" });
       }
-      if (!numbers.length) numbers = (fulfillment.trackingInfo || []).map((t) => t.number).filter(Boolean);
-      if (!numbers.length) continue;
+    }
+    for (const order of orders) {
+      const acsFulfillments = (order.fulfillments || []).filter((fulfillment) =>
+        fulfillment.status !== "CANCELLED" && (fulfillment.trackingInfo || []).some((tracking) => /ACS/i.test(tracking.company || "") && tracking.number)
+      );
+      let trackingEntries = acsFulfillments.flatMap((fulfillment) =>
+        fulfillment.trackingInfo.filter((tracking) => /ACS/i.test(tracking.company || "") && tracking.number)
+          .map((tracking) => ({ fulfillment, number: String(tracking.number) }))
+      );
+      trackingEntries = [...new Map(trackingEntries.map((entry) => [`${entry.fulfillment.id}:${entry.number}`, entry])).values()];
+      if (!trackingEntries.length) {
+        let fallbackNumbers = [];
+        try { fallbackNumbers = JSON.parse(order.metafield?.value || "[]").map(String); } catch { /* Ignore malformed legacy metadata. */ }
+        const fallbackFulfillment = (order.fulfillments || []).find((item) => item.status !== "CANCELLED");
+        // The order metafield only represents the current label. Use it only when
+        // Shopify has no ACS tracking number on any fulfillment to avoid pairing
+        // a second parcel's voucher with the first parcel's fulfillment.
+        if (fallbackFulfillment) trackingEntries = [...new Set(fallbackNumbers.filter(Boolean))].map((number) => ({ fulfillment: fallbackFulfillment, number }));
+      }
+      if (!trackingEntries.length) continue;
+      const orderTags = new Set(order.tags || []);
+      const packageStates = [];
 
-      for (const number of numbers) {
+      for (const { fulfillment, number } of trackingEntries) {
         result.checked++;
+        let packageStatus = null;
         try {
           const oldSnapshot = await prisma.acsTrackingSnapshot.findUnique({ where: { shop_voucherNo: { shop, voucherNo: String(number) } } });
           const currentEvents = (fulfillment.events?.edges || []).map((edge) => edge.node);
-          if (oldSnapshot?.status === "DELIVERED" && currentEvents.some((event) => event.status === "DELIVERED")) { result.skipped++; continue; }
-          if (oldSnapshot?.status === "RETURNED" && currentEvents.some((event) => event.status === "FAILURE" && /RESTITUITO AL MITTENTE/.test(event.message || ""))) { result.skipped++; continue; }
+          if (oldSnapshot?.status === "DELIVERED" && currentEvents.some((event) => event.status === "DELIVERED")) {
+            packageStates.push({ number, status: oldSnapshot.status });
+            result.skipped++;
+            continue;
+          }
+          if (oldSnapshot?.status === "RETURNED" && currentEvents.some((event) => event.status === "FAILURE" && /RESTITUITO AL MITTENTE/.test(event.message || ""))) {
+            packageStates.push({ number, status: oldSnapshot.status });
+            result.skipped++;
+            continue;
+          }
           const summary = getAcsTableRows(await getAcsTrackingSummary(number))[0];
           if (!summary) throw new Error("ACS non ha restituito lo stato riepilogativo.");
           const details = getAcsTableRows(await getAcsTrackingDetails(number));
@@ -153,6 +194,9 @@ export async function runAcsTrackingSync(admin, shop) {
             orderId: order.id,
             orderName: order.name,
             fulfillmentId: fulfillment.id,
+            fulfillmentStatus: fulfillment.displayStatus || fulfillment.status || null,
+            fulfillmentCreatedAt: fulfillment.createdAt ? new Date(fulfillment.createdAt) : null,
+            fulfillmentDeliveredAt: fulfillment.deliveredAt ? new Date(fulfillment.deliveredAt) : null,
             voucherNo: String(number),
             recipientName: order.shippingAddress?.name || null,
             status: classified.status,
@@ -174,6 +218,7 @@ export async function runAcsTrackingSync(admin, shop) {
           });
           result.snapshots++;
           if (["DELIVERY_PROBLEM", "DELIVERY_ATTEMPTED", "DELIVERY_DELAYED", "RETURNING", "RETURNED"].includes(classified.status)) result.alerts++;
+          packageStatus = classified.status;
 
           const existing = (fulfillment.events?.edges || []).map((edge) => edge.node);
           for (const checkpoint of details) {
@@ -227,19 +272,27 @@ export async function runAcsTrackingSync(admin, shop) {
             result.created++;
           }
         } catch (error) {
+          let previousStatus = null;
           try {
             const message = error?.message || "Errore ACS/Shopify";
             const where = { shop_voucherNo: { shop, voucherNo: String(number) } };
             const oldSnapshot = await prisma.acsTrackingSnapshot.findUnique({ where });
+            previousStatus = oldSnapshot?.status && oldSnapshot.status !== "SYNC_ERROR" ? oldSnapshot.status : null;
             await prisma.acsTrackingSnapshot.upsert({
               where,
               create: {
                 shop, orderId: order.id, orderName: order.name, fulfillmentId: fulfillment.id,
+                fulfillmentStatus: fulfillment.displayStatus || fulfillment.status || null,
+                fulfillmentCreatedAt: fulfillment.createdAt ? new Date(fulfillment.createdAt) : null,
+                fulfillmentDeliveredAt: fulfillment.deliveredAt ? new Date(fulfillment.deliveredAt) : null,
                 voucherNo: String(number), recipientName: order.shippingAddress?.name || null,
                 status: "SYNC_ERROR", statusLabel: "Errore di aggiornamento", error: message,
               },
               update: {
                 ...(oldSnapshot ? {} : { status: "SYNC_ERROR", statusLabel: "Errore di aggiornamento" }),
+                fulfillmentStatus: fulfillment.displayStatus || fulfillment.status || oldSnapshot?.fulfillmentStatus || null,
+                fulfillmentCreatedAt: fulfillment.createdAt ? new Date(fulfillment.createdAt) : oldSnapshot?.fulfillmentCreatedAt || null,
+                fulfillmentDeliveredAt: fulfillment.deliveredAt ? new Date(fulfillment.deliveredAt) : oldSnapshot?.fulfillmentDeliveredAt || null,
                 error: message,
                 lastCheckedAt: new Date(),
               },
@@ -247,8 +300,20 @@ export async function runAcsTrackingSync(admin, shop) {
           } catch (dbError) {
             console.error("ACS TRACKING SNAPSHOT ERROR:", dbError);
           }
+          packageStatus = previousStatus;
           result.errors.push({ order: order.name, voucher: number, message: error?.message || "Errore ACS/Shopify" });
         }
+        packageStates.push({ number, status: packageStatus });
+      }
+
+      // Order-level tags: an issue or return is relevant when any parcel is
+      // affected; delivery is final only when every active ACS parcel is delivered.
+      const observedStatuses = new Set(packageStates.map((item) => item.status).filter(Boolean));
+      for (const status of tagByStatus.keys()) {
+        const matches = status === "DELIVERED"
+          ? packageStates.length === trackingEntries.length && packageStates.length > 0 && packageStates.every((item) => item.status === "DELIVERED")
+          : observedStatuses.has(status);
+        if (matches) await addStatusTag(order, status, orderTags, packageStates.map((item) => item.number).join(", "));
       }
     }
     return result;

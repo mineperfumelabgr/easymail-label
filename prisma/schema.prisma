@@ -64,6 +64,9 @@ model AcsTrackingSnapshot {
   orderId        String
   orderName      String
   fulfillmentId  String
+  fulfillmentStatus String?
+  fulfillmentCreatedAt DateTime?
+  fulfillmentDeliveredAt DateTime?
   voucherNo      String
   recipientName  String?
   status         String
@@ -82,4 +85,17 @@ model AcsTrackingSnapshot {
   @@index([shop, status, lastCheckedAt])
   @@index([shop, orderName])
   @@index([shop, recipientName])
+}
+
+model AcsTrackingTagRule {
+  id        String   @id @default(cuid())
+  shop      String
+  status    String
+  enabled   Boolean  @default(false)
+  tag       String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([shop, status])
+  @@index([shop])
 }
