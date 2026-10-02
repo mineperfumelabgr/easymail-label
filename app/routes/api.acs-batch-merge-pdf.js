@@ -75,6 +75,50 @@ async function tagOrderWithBatchError(admin, orderId) {
   await addOrderTags(admin, orderId, [BATCH_ERROR_TAG]);
 }
 
+async function findExistingAcsLabels(admin, orders) {
+  const response = await admin.graphql(`#graphql
+    query ExistingAcsBatchLabels($ids: [ID!]!) {
+      nodes(ids: $ids) {
+        ... on Order {
+          id
+          name
+          voucher: metafield(namespace: "acs", key: "voucher_number") { value }
+          url: metafield(namespace: "acs", key: "label_url") { value }
+          pieces: metafield(namespace: "acs", key: "pieces") { value }
+          pickupDate: metafield(namespace: "acs", key: "pickup_date") { value }
+          numbers: metafield(namespace: "acs", key: "current_numbers") { value }
+        }
+      }
+    }
+  `, { variables: { ids: orders.map((order) => order.orderId) } });
+  const json = await response.json();
+  if (json?.errors?.length) throw new Error(json.errors.map((item) => item.message).join(" | "));
+
+  const byId = new Map((json?.data?.nodes || []).filter(Boolean).map((order) => [order.id, order]));
+  return orders.flatMap((order) => {
+    const node = byId.get(order.orderId);
+    const voucherNumber = safeStr(node?.voucher?.value);
+    if (!voucherNumber) return [];
+    let shipmentNumbers = [];
+    try {
+      const parsed = JSON.parse(node?.numbers?.value || "[]");
+      if (Array.isArray(parsed)) shipmentNumbers = parsed.map(String);
+    } catch {
+      shipmentNumbers = [];
+    }
+    if (!shipmentNumbers.length) shipmentNumbers = [voucherNumber];
+    return [{
+      orderId: order.orderId,
+      orderName: safeStr(node?.name) || order.orderName,
+      voucherNumber,
+      labelUrl: safeStr(node?.url?.value),
+      pieces: safeStr(node?.pieces?.value) || "1",
+      pickupDate: safeStr(node?.pickupDate?.value),
+      shipmentNumbers,
+    }];
+  });
+}
+
 function encodeResults(results) {
   return Buffer.from(JSON.stringify(results), "utf8").toString("base64");
 }
@@ -138,6 +182,7 @@ export async function action({ request }) {
         pickupDate: order?.pickupDate,
         cod: order?.cod,
         codAmount: order?.codAmount,
+        resolution: safeStr(order?.resolution),
       });
     }
 
@@ -151,12 +196,30 @@ export async function action({ request }) {
       );
     }
 
+    // Stop before creating or printing anything when an existing label needs
+    // an explicit per-order choice. This prevents accidental duplicate prints.
+    const existingLabels = await findExistingAcsLabels(admin, uniqueOrders);
+    const existingById = new Map(existingLabels.map((item) => [item.orderId, item]));
+    const unresolved = existingLabels.filter((item) => {
+      const order = uniqueOrders.find((candidate) => candidate.orderId === item.orderId);
+      return !["reprint", "skip", "new"].includes(order?.resolution);
+    });
+    if (unresolved.length) {
+      return jsonResponse({ success: true, requiresResolution: true, existingOrders: unresolved });
+    }
+
     const mergedPdf = await PDFDocument.create();
     const successes = [];
+    const skipped = [];
     const errors = [];
     const tagWarnings = [];
 
     for (const order of uniqueOrders) {
+      const existingLabel = existingById.get(order.orderId);
+      if (existingLabel && order.resolution === "skip") {
+        skipped.push({ orderId: order.orderId, orderName: order.orderName, reason: "Skipped by user" });
+        continue;
+      }
       if (preparedBy) {
         try {
           await addOrderTags(admin, order.orderId, [preparedBy]);
@@ -174,7 +237,7 @@ export async function action({ request }) {
         const result = await createOrReuseAcsLabel({
           admin,
           orderGid: order.orderId,
-          forceNew: false,
+          forceNew: order.resolution === "new",
           pieces: order.pieces,
           codOverride: parseCodOverride(order.cod),
           codAmountOverride: parseCodAmountOverride(order.codAmount),
@@ -247,12 +310,16 @@ export async function action({ request }) {
 
     const results = {
       successes,
+      skipped,
       errors,
       tagWarnings,
       preparedBy: preparedBy || null,
       errorTag: BATCH_ERROR_TAG,
     };
     if (mergedPdf.getPageCount() === 0) {
+      if (skipped.length && !errors.length) {
+        return jsonResponse({ success: true, results });
+      }
       return jsonResponse({
         success: false,
         message: "No ACS labels could be generated.",

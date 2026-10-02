@@ -216,7 +216,9 @@ function Extension() {
         const newLabels = normalizeLabels(json);
         setLabels(newLabels);
 
-        if (json.pickupDate) {
+        // An existing voucher carries its original pickup date. Keep the date
+        // currently selected in the form so "Generate new" uses that date.
+        if (json.pickupDate && !json.exists) {
           setPickupDate(String(json.pickupDate));
         }
 

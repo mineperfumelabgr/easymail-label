@@ -57,3 +57,29 @@ model Employee {
   @@unique([shop, normalizedName])
   @@index([shop, name])
 }
+
+model AcsTrackingSnapshot {
+  id             String   @id @default(cuid())
+  shop           String
+  orderId        String
+  orderName      String
+  fulfillmentId  String
+  voucherNo      String
+  recipientName  String?
+  status         String
+  statusLabel    String
+  shipmentStatus Int?
+  deliveryFlag   Int?
+  returnedFlag   Int?
+  reasonCode     String?
+  lastCheckpoint String?
+  lastLocation   String?
+  lastEventAt    DateTime?
+  lastCheckedAt  DateTime @default(now())
+  error          String?
+
+  @@unique([shop, voucherNo])
+  @@index([shop, status, lastCheckedAt])
+  @@index([shop, orderName])
+  @@index([shop, recipientName])
+}

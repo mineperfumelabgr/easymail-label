@@ -119,6 +119,22 @@ export async function printAcsVoucher(voucherNo, { printType = 2, startPosition 
   });
 }
 
+export async function getAcsTrackingSummary(voucherNo) {
+  return acsCall("ACS_Trackingsummary", {
+    ...getCreds(),
+    Language: "GR",
+    Voucher_No: String(voucherNo),
+  });
+}
+
+export async function getAcsTrackingDetails(voucherNo) {
+  return acsCall("ACS_TrackingDetails", {
+    ...getCreds(),
+    Language: "GR",
+    Voucher_No: String(voucherNo),
+  });
+}
+
 export async function deleteAcsVoucher(voucherNo) {
   return acsCall("ACS_Delete_Voucher", {
     ...getCreds(),

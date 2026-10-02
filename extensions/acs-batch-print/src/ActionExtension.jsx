@@ -68,6 +68,7 @@ function Extension() {
   const { data } = shopify;
   const selected = Array.isArray(data?.selected) ? data.selected : [];
   const selectedIds = selected.map((item) => item.id).filter(Boolean);
+  const selectedIdsKey = selectedIds.join("|");
   const today = useMemo(() => todayLocalYMD(), []);
 
   const [orders, setOrders] = useState(() =>
@@ -89,6 +90,7 @@ function Extension() {
   const [loadError, setLoadError] = useState("");
   const [batchError, setBatchError] = useState("");
   const [batchResults, setBatchResults] = useState(null);
+  const [existingOrders, setExistingOrders] = useState([]);
   const [printSource, setPrintSource] = useState("");
   const [ordersExpanded, setOrdersExpanded] = useState(false);
   const [employees, setEmployees] = useState([]);
@@ -132,7 +134,8 @@ function Extension() {
     let cancelled = false;
 
     async function loadSelectedOrders() {
-      if (!selectedIds.length) return;
+      const ids = selectedIdsKey ? selectedIdsKey.split("|") : [];
+      if (!ids.length) return;
       setLoadingOrders(true);
       setLoadError("");
 
@@ -158,7 +161,7 @@ function Extension() {
                 }
               }
             `,
-            variables: { ids: selectedIds },
+            variables: { ids },
           }),
         });
 
@@ -222,7 +225,7 @@ function Extension() {
     return () => {
       cancelled = true;
     };
-  }, [selectedIds.join("|")]);
+  }, [selectedIdsKey]);
 
   const readChecked = useCallback((event) => {
     const target = event?.target;
@@ -263,6 +266,7 @@ function Extension() {
             pickupDate: order.pickupDate,
             cod: order.codEnabled,
             codAmount: order.codEnabled ? order.codAmount : "",
+            resolution: order.resolution || "",
           })),
         }),
       });
@@ -272,6 +276,7 @@ function Extension() {
         const results = decodeBatchResults(
           response.headers.get("X-ACS-Batch-Results"),
         );
+        setExistingOrders([]);
         const vouchers = (results?.successes || [])
           .map(
             (order) =>
@@ -291,7 +296,19 @@ function Extension() {
       } else {
         const payload = await response.json().catch(() => null);
         const results = payload?.results || null;
-        if (results) setBatchResults(results);
+        if (results) {
+          setBatchResults(results);
+          setExistingOrders([]);
+        }
+        if (payload?.requiresResolution && Array.isArray(payload.existingOrders)) {
+          const existing = payload.existingOrders;
+          const existingById = new Map(existing.map((item) => [item.orderId, item]));
+          setExistingOrders(existing);
+          setOrders((current) => current.map((order) =>
+            existingById.has(order.orderId) ? { ...order, resolution: "" } : order,
+          ));
+          return;
+        }
         if (!response.ok || !payload?.success) {
           const firstError = results?.errors?.[0]?.message;
           setBatchError(
@@ -305,6 +322,11 @@ function Extension() {
       setLoadingBatch(false);
     }
   }, [orders, employeeId]);
+
+  const unresolvedExisting = existingOrders.filter((item) => {
+    const order = orders.find((candidate) => candidate.orderId === item.orderId);
+    return !["reprint", "skip", "new"].includes(order?.resolution);
+  });
 
   const lineSummary = (lineItems) =>
     lineItems.length
@@ -420,12 +442,45 @@ function Extension() {
             loadingOrders ||
             loadingBatch ||
             Boolean(loadError) ||
+            unresolvedExisting.length > 0 ||
             !orders.every((order) => isValidDateYMD(order.pickupDate))
           }
         >
           {loadingBatch ? "Generating labels…" : "Generate ACS labels"}
         </s-button>
       </s-box>
+
+      {existingOrders.length ? (
+        <s-box paddingBlockStart="small">
+          <s-banner tone="warning">
+            <s-text>Some selected orders already have ACS labels. Choose what to do for each one before generating the combined PDF.</s-text>
+            {existingOrders.map((item) => {
+              const order = orders.find((candidate) => candidate.orderId === item.orderId);
+              const resolution = order?.resolution || "";
+              const choose = (value) => updateOrder(item.orderId, { resolution: value });
+              return (
+                <s-box key={item.orderId} paddingBlockStart="small">
+                  <s-text>{item.orderName} — existing voucher {item.voucherNumber}{item.pickupDate ? ` • pickup ${item.pickupDate}` : ""}</s-text>
+                  <s-inline-stack gap="base" paddingBlockStart="xsmall">
+                    <s-button onClick={() => choose("reprint")} disabled={loadingBatch}>
+                      {resolution === "reprint" ? "✓ Reprint old label" : "Reprint old label"}
+                    </s-button>
+                    <s-button onClick={() => choose("skip")} disabled={loadingBatch}>
+                      {resolution === "skip" ? "✓ Ignore order" : "Ignore order"}
+                    </s-button>
+                    <s-button onClick={() => choose("new")} disabled={loadingBatch}>
+                      {resolution === "new" ? "✓ Create new label" : "Create new label"}
+                    </s-button>
+                  </s-inline-stack>
+                  {resolution === "new" ? (
+                    <s-text tone="subdued">The new label will use this order&apos;s current COD choice, amount, pieces, and pickup date above.</s-text>
+                  ) : null}
+                </s-box>
+              );
+            })}
+          </s-banner>
+        </s-box>
+      ) : null}
 
       {batchResults?.errors?.length ? (
         <s-box paddingBlockStart="small">
@@ -456,6 +511,14 @@ function Extension() {
                 </s-text>
               </s-box>
             ))}
+          </s-banner>
+        </s-box>
+      ) : null}
+
+      {batchResults?.skipped?.length ? (
+        <s-box paddingBlockStart="small">
+          <s-banner tone="info">
+            <s-text>Ignored orders: {batchResults.skipped.map((item) => item.orderName).join(", ")}</s-text>
           </s-banner>
         </s-box>
       ) : null}
