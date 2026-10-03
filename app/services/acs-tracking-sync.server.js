@@ -87,7 +87,7 @@ function summaryEventStatus(status) {
   }[status] || null;
 }
 
-function eventTime(value) {
+export function eventTime(value) {
   if (!value) return null;
   const s = String(value).trim();
   const match = s.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?$/);
@@ -184,7 +184,30 @@ export async function runAcsTrackingSync(admin, shop) {
             continue;
           }
           const summary = getAcsTableRows(await getAcsTrackingSummary(number))[0];
-          if (!summary) throw new Error("ACS non ha restituito lo stato riepilogativo.");
+          if (!summary) {
+            // Shopify already has an active ACS fulfillment: until ACS has its first
+            // scan, this is a newly created label, not a failed delivery or sync error.
+            const waitingSnapshot = {
+              shop, orderId: order.id, orderName: order.name, fulfillmentId: fulfillment.id,
+              fulfillmentStatus: fulfillment.displayStatus || fulfillment.status || null,
+              fulfillmentCreatedAt: fulfillment.createdAt ? new Date(fulfillment.createdAt) : null,
+              fulfillmentDeliveredAt: fulfillment.deliveredAt ? new Date(fulfillment.deliveredAt) : null,
+              voucherNo: String(number), recipientName: order.shippingAddress?.name || null,
+              status: "LABEL_CREATED", statusLabel: "Label created; awaiting ACS pickup",
+              shipmentStatus: null, deliveryFlag: 0, returnedFlag: 0, reasonCode: null,
+              lastCheckpoint: null, lastLocation: null, lastEventAt: null,
+              lastCheckedAt: new Date(), error: null,
+            };
+            await prisma.acsTrackingSnapshot.upsert({
+              where: { shop_voucherNo: { shop, voucherNo: String(number) } },
+              create: waitingSnapshot,
+              update: { ...waitingSnapshot, status: oldSnapshot?.status && !["SYNC_ERROR", "LABEL_CREATED"].includes(oldSnapshot.status) ? oldSnapshot.status : "LABEL_CREATED", statusLabel: oldSnapshot?.status && !["SYNC_ERROR", "LABEL_CREATED"].includes(oldSnapshot.status) ? oldSnapshot.statusLabel : waitingSnapshot.statusLabel },
+            });
+            result.snapshots++;
+            packageStatus = oldSnapshot?.status && !["SYNC_ERROR", "LABEL_CREATED"].includes(oldSnapshot.status) ? oldSnapshot.status : "LABEL_CREATED";
+            packageStates.push({ number, status: packageStatus });
+            continue;
+          }
           const details = getAcsTableRows(await getAcsTrackingDetails(number));
           const checkpoints = [...details].sort((a, b) => String(a.checkpoint_date_time).localeCompare(String(b.checkpoint_date_time)));
           const lastCheckpoint = [...checkpoints].reverse().find((item) => !/SMS|MESSAG|ΕΙΔΟΠΟΙΗΣ|ΕΚΤΥΠΩΣ|ΕΤΙΚΕΤ|VOUCHER|LABEL/i.test(item.checkpoint_action || ""));

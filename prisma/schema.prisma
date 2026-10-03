@@ -61,9 +61,9 @@ model Employee {
 model AcsTrackingSnapshot {
   id             String   @id @default(cuid())
   shop           String
-  orderId        String
-  orderName      String
-  fulfillmentId  String
+  orderId        String?
+  orderName      String?
+  fulfillmentId  String?
   fulfillmentStatus String?
   fulfillmentCreatedAt DateTime?
   fulfillmentDeliveredAt DateTime?
@@ -98,4 +98,29 @@ model AcsTrackingTagRule {
 
   @@unique([shop, status])
   @@index([shop])
+}
+
+model AcsManualShipment {
+  id             String   @id @default(cuid())
+  shop           String
+  recipientName  String
+  phone          String
+  email          String?
+  company        String?
+  address        String
+  floor          String?
+  city           String
+  region         String
+  zip            String
+  countryCode    String
+  pieces         Int      @default(1)
+  codAmount      Float?
+  pickupDate     String
+  reference      String?
+  voucherNo      String
+  shipmentNumbers String
+  createdAt      DateTime @default(now())
+
+  @@unique([shop, voucherNo])
+  @@index([shop, createdAt])
 }

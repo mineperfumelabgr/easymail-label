@@ -20,6 +20,8 @@ export default function AcsDailyLabelsPage() {
   const [data, setData] = useState({ labels: [], pickupLists: [] });
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [selected, setSelected] = useState(new Set());
+  const [printing, setPrinting] = useState(false);
 
   async function load(selectedDate = date) {
     setLoading(true);
@@ -220,21 +222,7 @@ export default function AcsDailyLabelsPage() {
           {loading ? "Loading..." : "Load labels"}
         </button>
 
-        <button
-          onClick={handleIssuePickupList}
-          disabled={loading || issuing}
-          style={{
-            padding: "10px 16px",
-            border: "1px solid #2d8a46",
-            borderRadius: 8,
-            background: "#2f9e44",
-            color: "#fff",
-            fontWeight: 600,
-            cursor: loading || issuing ? "not-allowed" : "pointer",
-          }}
-        >
-          {issuing ? "Issuing..." : "Issue pickup list"}
-        </button>
+
       </div>
 
       {notice ? (
@@ -331,6 +319,21 @@ export default function AcsDailyLabelsPage() {
             </div>
 
             {visibleLabels.length ? (
+              <>
+              <div style={{ display: "flex", gap: 10, alignItems: "center", margin: "14px 0" }}>
+                <button type="button" onClick={() => setSelected(new Set(visibleLabels.map((row) => row.orderId + row.voucherNumber)))}>Select shown</button>
+                <button type="button" onClick={() => setSelected(new Set())}>Clear selection</button>
+                <button type="button" disabled={!selected.size || printing} onClick={async () => {
+                  const numbers = visibleLabels.filter((row) => selected.has(row.orderId + row.voucherNumber)).flatMap((row) => (row.labels || []).map((label) => String(label.number)));
+                  const printWindow = window.open("about:blank", "_blank");
+                  setPrinting(true);
+                  try {
+                    const response = await fetch("/api/acs-print-selected-labels", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ numbers }) });
+                    if (!response.ok) { const body = await response.json(); throw new Error(body.message || "Could not print selected labels."); }
+                    const blob = await response.blob(); const href = URL.createObjectURL(blob); if (printWindow) printWindow.location.href = href; else window.location.href = href; setTimeout(() => URL.revokeObjectURL(href), 60000);
+                  } catch (err) { if (printWindow) printWindow.close(); setError(err.message || "Print failed."); } finally { setPrinting(false); }
+                }}>{printing ? "Preparing PDF…" : `Print selected (${selected.size})`}</button>
+              </div>
               <div style={{ display: "grid", gap: 12 }}>
                 {visibleLabels.map((row) => (
                   <div
@@ -342,6 +345,7 @@ export default function AcsDailyLabelsPage() {
                       background: "#fff",
                     }}
                   >
+                    <label style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12 }}><input type="checkbox" checked={selected.has(row.orderId + row.voucherNumber)} onChange={(event) => setSelected((prev) => { const next = new Set(prev); const key = row.orderId + row.voucherNumber; if (event.target.checked) next.add(key); else next.delete(key); return next; })} /><strong>Select shipment</strong></label>
                     <div style={{ marginBottom: 8 }}>
                       <strong>{row.orderName}</strong> — Voucher:{" "}
                       <strong>{row.voucherNumber}</strong>
@@ -401,6 +405,7 @@ export default function AcsDailyLabelsPage() {
                   </div>
                 ))}
               </div>
+              </>
             ) : (
               <p>No orders for this date match your search.</p>
             )}
@@ -408,9 +413,11 @@ export default function AcsDailyLabelsPage() {
         )
       ) : null}
 
-      <h2 style={{ fontSize: 20, marginTop: 28, marginBottom: 12 }}>
-        Pickup lists for {date}
-      </h2>
+      <section style={{ marginTop: 28, padding: 18, border: "1px solid #dfe1e3", borderRadius: 12, background: "#fff" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div><h2 style={{ fontSize: 20, margin: "0 0 5px" }}>ACS pickup list · {date}</h2><p style={{ margin: 0, color: "#616161" }}>Issue the carrier manifest after all labels for this pickup date are ready.</p></div>
+        <button onClick={handleIssuePickupList} disabled={loading || issuing || data.pickupLists.length > 0} style={{ padding: "10px 16px", border: 0, borderRadius: 8, background: "#008060", color: "#fff", fontWeight: 600 }}>{data.pickupLists.length ? "Pickup list already issued" : issuing ? "Issuing…" : "Issue pickup list"}</button>
+      </div>
 
       {loading ? null : data.pickupLists.length === 0 ? (
         <p>No ACS pickup lists found for this date.</p>
@@ -452,6 +459,7 @@ export default function AcsDailyLabelsPage() {
         </div>
       )}
 
+      </section>
       <div
         style={{
           marginTop: 28,
