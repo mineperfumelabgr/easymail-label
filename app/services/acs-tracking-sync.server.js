@@ -6,15 +6,32 @@ const ORDER_QUERY = `#graphql
     orders(first: 50, after: $after, sortKey: CREATED_AT, reverse: true) {
       pageInfo { hasNextPage endCursor }
       edges { node {
-          id name
+          id name createdAt
         shippingAddress { name }
         tags
         metafield(namespace: "acs", key: "current_numbers") { value }
         fulfillments(first: 10) {
           id status displayStatus createdAt deliveredAt trackingInfo { company number }
-          events(first: 100) { edges { node { status happenedAt message } } }
+          events(first: 20, sortKey: HAPPENED_AT, reverse: true) { edges { node { status happenedAt message } } }
         }
       } }
+    }
+  }
+`;
+
+const ACTIVE_ORDERS_QUERY = `#graphql
+  query ActiveAcsOrdersById($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      ... on Order {
+        id name createdAt
+        shippingAddress { name }
+        tags
+        metafield(namespace: "acs", key: "current_numbers") { value }
+        fulfillments(first: 10) {
+          id status displayStatus createdAt deliveredAt trackingInfo { company number }
+          events(first: 20, sortKey: HAPPENED_AT, reverse: true) { edges { node { status happenedAt message } } }
+        }
+      }
     }
   }
 `;
@@ -142,6 +159,22 @@ export async function runAcsTrackingSync(admin, shop) {
       after = connection.pageInfo.endCursor;
     }
 
+    // Recent-order discovery is capped at 250 rows per run. Also reload every
+    // previously tracked, non-delivered order by ID so an old open shipment is
+    // not abandoned just because newer orders pushed it past that window.
+    const knownOpenOrderRows = await prisma.acsTrackingSnapshot.findMany({
+      where: { shop, orderId: { not: null }, status: { notIn: ["DELIVERED", "RETURNED", "ACS_REVIEW_REQUIRED"] } },
+      select: { orderId: true },
+      distinct: ["orderId"],
+    });
+    const knownOpenOrderIds = knownOpenOrderRows.map((row) => row.orderId).filter(Boolean);
+    for (let i = 0; i < knownOpenOrderIds.length; i += 5) {
+      const data = await graph(admin, ACTIVE_ORDERS_QUERY, { ids: knownOpenOrderIds.slice(i, i + 5) });
+      orders.push(...(data.nodes || []).filter(Boolean));
+    }
+    const uniqueOrders = [...new Map(orders.map((order) => [order.id, order])).values()];
+    orders.splice(0, orders.length, ...uniqueOrders);
+
     const result = { checked: 0, created: 0, skipped: 0, snapshots: 0, alerts: 0, tagsAdded: 0, tagErrors: [], errors: [] };
     const tagRules = await prisma.acsTrackingTagRule.findMany({ where: { shop, enabled: true } });
     const tagByStatus = new Map(tagRules.filter((rule) => rule.tag?.trim()).map((rule) => [rule.status, rule.tag.trim()]));
@@ -197,14 +230,63 @@ export async function runAcsTrackingSync(admin, shop) {
             }
             await prisma.acsTrackingSnapshot.update({
               where: { shop_voucherNo: { shop, voucherNo: String(number) } },
-              data: { lastShopifyEventStatus: "DELIVERED", lastCheckedAt: new Date() },
+              data: {
+                orderCreatedAt: order.createdAt ? new Date(order.createdAt) : null,
+                fulfillmentId: fulfillment.id,
+                fulfillmentStatus: fulfillment.displayStatus || fulfillment.status || null,
+                fulfillmentCreatedAt: fulfillment.createdAt ? new Date(fulfillment.createdAt) : null,
+                fulfillmentDeliveredAt: fulfillment.deliveredAt ? new Date(fulfillment.deliveredAt) : null,
+                lastShopifyEventStatus: "DELIVERED",
+                lastCheckedAt: new Date(),
+              },
             });
             packageStates.push({ number, status: oldSnapshot.status });
             result.skipped++;
             continue;
           }
           if (oldSnapshot?.status === "RETURNED" && currentEvents.some((event) => event.status === "FAILURE" && /RESTITUITO AL MITTENTE/.test(event.message || ""))) {
+            await prisma.acsTrackingSnapshot.update({
+              where: { shop_voucherNo: { shop, voucherNo: String(number) } },
+              data: {
+                orderCreatedAt: order.createdAt ? new Date(order.createdAt) : null,
+                fulfillmentId: fulfillment.id,
+                fulfillmentStatus: fulfillment.displayStatus || fulfillment.status || null,
+                fulfillmentCreatedAt: fulfillment.createdAt ? new Date(fulfillment.createdAt) : null,
+                fulfillmentDeliveredAt: fulfillment.deliveredAt ? new Date(fulfillment.deliveredAt) : null,
+                lastCheckedAt: new Date(),
+              },
+            });
             packageStates.push({ number, status: oldSnapshot.status });
+            result.skipped++;
+            continue;
+          }
+          const ageAnchor = fulfillment.createdAt || oldSnapshot?.fulfillmentCreatedAt || order.createdAt || oldSnapshot?.orderCreatedAt;
+          const isOlderThanReviewCutoff = ageAnchor && Number.isFinite(new Date(ageAnchor).getTime())
+            && Date.now() - new Date(ageAnchor).getTime() >= 90 * 24 * 60 * 60 * 1000;
+          if (isOlderThanReviewCutoff && oldSnapshot?.status !== "RETURNED") {
+            // Old unresolved shipments move to a manual-review state. Do not
+            // query ACS or emit Shopify events/tags for an unverified outcome.
+            const reviewSnapshot = {
+              shop, orderId: order.id, orderName: order.name,
+              orderCreatedAt: order.createdAt ? new Date(order.createdAt) : oldSnapshot?.orderCreatedAt || null,
+              fulfillmentId: fulfillment.id,
+              fulfillmentStatus: fulfillment.displayStatus || fulfillment.status || oldSnapshot?.fulfillmentStatus || null,
+              fulfillmentCreatedAt: fulfillment.createdAt ? new Date(fulfillment.createdAt) : oldSnapshot?.fulfillmentCreatedAt || null,
+              fulfillmentDeliveredAt: fulfillment.deliveredAt ? new Date(fulfillment.deliveredAt) : oldSnapshot?.fulfillmentDeliveredAt || null,
+              voucherNo: String(number), recipientName: order.shippingAddress?.name || oldSnapshot?.recipientName || null,
+              status: "ACS_REVIEW_REQUIRED", statusLabel: "Older than 90 days; manual ACS review required",
+              shipmentStatus: oldSnapshot?.shipmentStatus ?? null, deliveryFlag: oldSnapshot?.deliveryFlag ?? 0,
+              returnedFlag: oldSnapshot?.returnedFlag ?? 0, reasonCode: oldSnapshot?.reasonCode || null,
+              lastCheckpoint: oldSnapshot?.lastCheckpoint || null, lastLocation: oldSnapshot?.lastLocation || null,
+              lastEventAt: oldSnapshot?.lastEventAt || null, lastCheckedAt: new Date(), error: null,
+            };
+            await prisma.acsTrackingSnapshot.upsert({
+              where: { shop_voucherNo: { shop, voucherNo: String(number) } },
+              create: reviewSnapshot,
+              update: { ...reviewSnapshot, lastShopifyEventStatus: oldSnapshot?.lastShopifyEventStatus || null, lastShopifyCheckpointAt: oldSnapshot?.lastShopifyCheckpointAt || null },
+            });
+            packageStatus = "ACS_REVIEW_REQUIRED";
+            packageStates.push({ number, status: packageStatus });
             result.skipped++;
             continue;
           }
@@ -213,7 +295,7 @@ export async function runAcsTrackingSync(admin, shop) {
             // Shopify already has an active ACS fulfillment: until ACS has its first
             // scan, this is a newly created label, not a failed delivery or sync error.
             const waitingSnapshot = {
-              shop, orderId: order.id, orderName: order.name, fulfillmentId: fulfillment.id,
+              shop, orderId: order.id, orderName: order.name, orderCreatedAt: order.createdAt ? new Date(order.createdAt) : null, fulfillmentId: fulfillment.id,
               fulfillmentStatus: fulfillment.displayStatus || fulfillment.status || null,
               fulfillmentCreatedAt: fulfillment.createdAt ? new Date(fulfillment.createdAt) : null,
               fulfillmentDeliveredAt: fulfillment.deliveredAt ? new Date(fulfillment.deliveredAt) : null,
@@ -247,6 +329,7 @@ export async function runAcsTrackingSync(admin, shop) {
             shop,
             orderId: order.id,
             orderName: order.name,
+            orderCreatedAt: order.createdAt ? new Date(order.createdAt) : null,
             fulfillmentId: fulfillment.id,
             fulfillmentStatus: fulfillment.displayStatus || fulfillment.status || null,
             fulfillmentCreatedAt: fulfillment.createdAt ? new Date(fulfillment.createdAt) : null,
@@ -285,7 +368,9 @@ export async function runAcsTrackingSync(admin, shop) {
             ? summaryStatus
             : (specificCheckpointStatuses.includes(checkpointStatus) ? checkpointStatus : summaryStatus);
           const latestCheckpointAt = eventTime(lastCheckpoint?.checkpoint_date_time);
-          const summaryEventAt = eventTime(summary.delivery_date) || latestCheckpointAt || new Date().toISOString();
+          const summaryEventAt = ["RETURNING", "RETURNED"].includes(classified.status)
+            ? (latestCheckpointAt || eventTime(summary.delivery_date) || new Date().toISOString())
+            : (eventTime(summary.delivery_date) || latestCheckpointAt || new Date().toISOString());
           const where = { shop_voucherNo: { shop, voucherNo: String(number) } };
           let lastSentStatus = oldSnapshot?.lastShopifyEventStatus || latestVoucherEvent?.status || null;
           const previousCursor = oldSnapshot?.lastShopifyCheckpointAt || null;
@@ -342,7 +427,7 @@ export async function runAcsTrackingSync(admin, shop) {
             await prisma.acsTrackingSnapshot.upsert({
               where,
               create: {
-                shop, orderId: order.id, orderName: order.name, fulfillmentId: fulfillment.id,
+                shop, orderId: order.id, orderName: order.name, orderCreatedAt: order.createdAt ? new Date(order.createdAt) : null, fulfillmentId: fulfillment.id,
                 fulfillmentStatus: fulfillment.displayStatus || fulfillment.status || null,
                 fulfillmentCreatedAt: fulfillment.createdAt ? new Date(fulfillment.createdAt) : null,
                 fulfillmentDeliveredAt: fulfillment.deliveredAt ? new Date(fulfillment.deliveredAt) : null,
@@ -351,6 +436,7 @@ export async function runAcsTrackingSync(admin, shop) {
               },
               update: {
                 ...(oldSnapshot ? {} : { status: "SYNC_ERROR", statusLabel: "Errore di aggiornamento" }),
+                orderCreatedAt: order.createdAt ? new Date(order.createdAt) : oldSnapshot?.orderCreatedAt || null,
                 fulfillmentStatus: fulfillment.displayStatus || fulfillment.status || oldSnapshot?.fulfillmentStatus || null,
                 fulfillmentCreatedAt: fulfillment.createdAt ? new Date(fulfillment.createdAt) : oldSnapshot?.fulfillmentCreatedAt || null,
                 fulfillmentDeliveredAt: fulfillment.deliveredAt ? new Date(fulfillment.deliveredAt) : oldSnapshot?.fulfillmentDeliveredAt || null,

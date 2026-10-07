@@ -4,19 +4,19 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
 const ALERT_STATUSES = ["DELIVERY_PROBLEM", "DELIVERY_ATTEMPTED", "DELIVERY_DELAYED"];
-const FILTERS = ["ALL", "ALERTS", "RETURNS", "PICKUP", "DELIVERY", "TRANSIT", "DELIVERED", "LABEL_CREATED", "SYNC_ERROR"];
+const FILTERS = ["ALL", "ALERTS", "RETURNS", "PICKUP", "DELIVERY", "TRANSIT", "DELIVERED", "LABEL_CREATED", "REVIEW_REQUIRED", "SYNC_ERROR"];
 const STATUS_LABELS = {
   en: {
     DELIVERY_PROBLEM: "Delivery problem", DELIVERY_ATTEMPTED: "Delivery attempted", DELIVERY_DELAYED: "Delivery delayed",
     IN_TRANSIT: "In transit", OUT_FOR_DELIVERY: "Out for delivery", READY_FOR_PICKUP: "Ready for pickup",
     RETURNING: "Returning to sender", RETURNED: "Returned to sender", DELIVERED: "Delivered to recipient",
-    LABEL_CREATED: "Label created · awaiting ACS pickup", UNKNOWN: "Check ACS status", SYNC_ERROR: "Sync issue",
+    LABEL_CREATED: "Label created · awaiting ACS pickup", ACS_REVIEW_REQUIRED: "ACS review required", UNKNOWN: "Check ACS status", SYNC_ERROR: "Sync issue",
   },
   el: {
     DELIVERY_PROBLEM: "Πρόβλημα παράδοσης", DELIVERY_ATTEMPTED: "Ανεπιτυχής προσπάθεια", DELIVERY_DELAYED: "Καθυστέρηση παράδοσης",
     IN_TRANSIT: "Σε μεταφορά", OUT_FOR_DELIVERY: "Προς παράδοση", READY_FOR_PICKUP: "Για παραλαβή",
     RETURNING: "Επιστροφή στον αποστολέα", RETURNED: "Επιστράφηκε στον αποστολέα", DELIVERED: "Παραδόθηκε στον παραλήπτη",
-    LABEL_CREATED: "Δημιουργήθηκε ετικέτα · αναμονή παραλαβής ACS", UNKNOWN: "Έλεγχος κατάστασης ACS", SYNC_ERROR: "Πρόβλημα συγχρονισμού",
+    LABEL_CREATED: "Δημιουργήθηκε ετικέτα · αναμονή παραλαβής ACS", ACS_REVIEW_REQUIRED: "Απαιτείται έλεγχος ACS", UNKNOWN: "Έλεγχος κατάστασης ACS", SYNC_ERROR: "Πρόβλημα συγχρονισμού",
   },
 };
 const COPY = {
@@ -24,7 +24,7 @@ const COPY = {
     title: "ACS shipment dashboard", subtitle: "ACS shipment status and Shopify fulfillment are shown separately.",
     total: "Tracked shipments", attention: "Needs attention", returns: "Returns", delivery: "Out for delivery", delivered: "Delivered",
     search: "Search tracking, order or recipient", searchButton: "Search", refresh: "Refresh ACS tracking", refreshing: "Checking ACS…",
-    all: "All", alerts: "Issues", returnsFilter: "Returns", pickup: "Pickup", deliveryFilter: "Out for delivery", transit: "In transit", deliveredFilter: "Delivered", labelCreated: "Awaiting pickup", syncError: "Sync issues",
+    all: "All", alerts: "Issues", returnsFilter: "Returns", pickup: "Pickup", deliveryFilter: "Out for delivery", transit: "In transit", deliveredFilter: "Delivered", labelCreated: "Awaiting pickup", reviewRequired: "Manual review", syncError: "Sync issues",
     status: "ACS status", fulfillment: "Shopify fulfillment", order: "Order / recipient", voucher: "ACS tracking", checkpoint: "Latest ACS update", checked: "Last checked",
     created: "Created", deliveredAt: "Delivered", age: "Open for", days: "days", day: "day", syncIssue: "Sync issue", noResults: "No shipments match this search or filter.", empty: "No ACS shipments synced yet. Use Refresh ACS tracking to start.",
     deliveredRule: "Delivered is recorded only when ACS confirms delivery flags. SMS and message checkpoints are not proof of delivery.",
@@ -36,7 +36,7 @@ const COPY = {
     title: "Πίνακας αποστολών ACS", subtitle: "Η κατάσταση ACS και η εκπλήρωση παραγγελίας Shopify εμφανίζονται ξεχωριστά.",
     total: "Παρακολουθούμενες", attention: "Χρειάζονται προσοχή", returns: "Επιστροφές", delivery: "Προς παράδοση", delivered: "Παραδόθηκαν",
     search: "Αναζήτηση tracking, παραγγελίας ή παραλήπτη", searchButton: "Αναζήτηση", refresh: "Ανανέωση tracking ACS", refreshing: "Έλεγχος ACS…",
-    all: "Όλες", alerts: "Προβλήματα", returnsFilter: "Επιστροφές", pickup: "Παραλαβή", deliveryFilter: "Προς παράδοση", transit: "Σε μεταφορά", deliveredFilter: "Παραδόθηκαν", labelCreated: "Αναμονή παραλαβής", syncError: "Σφάλματα συγχρονισμού",
+    all: "Όλες", alerts: "Προβλήματα", returnsFilter: "Επιστροφές", pickup: "Παραλαβή", deliveryFilter: "Προς παράδοση", transit: "Σε μεταφορά", deliveredFilter: "Παραδόθηκαν", labelCreated: "Αναμονή παραλαβής", reviewRequired: "Χειροκίνητος έλεγχος", syncError: "Σφάλματα συγχρονισμού",
     status: "Κατάσταση ACS", fulfillment: "Εκπλήρωση Shopify", order: "Παραγγελία / παραλήπτης", voucher: "Tracking ACS", checkpoint: "Τελευταία ενημέρωση ACS", checked: "Τελευταίος έλεγχος",
     created: "Δημιουργήθηκε", deliveredAt: "Παραδόθηκε", age: "Ανοιχτό για", days: "ημέρες", day: "ημέρα", syncIssue: "Σφάλμα συγχρονισμού", noResults: "Δεν βρέθηκαν αποστολές για την αναζήτηση ή το φίλτρο.", empty: "Δεν υπάρχουν συγχρονισμένες αποστολές ACS. Πατήστε Ανανέωση tracking ACS.",
     deliveredRule: "Η παράδοση επιβεβαιώνεται μόνο από τα στοιχεία παράδοσης της ACS. Τα SMS και τα μηνύματα δεν θεωρούνται απόδειξη παράδοσης.",
@@ -54,6 +54,7 @@ function filterWhere(filter) {
   if (filter === "TRANSIT") return { status: "IN_TRANSIT" };
   if (filter === "DELIVERED") return { status: "DELIVERED" };
   if (filter === "LABEL_CREATED") return { status: "LABEL_CREATED" };
+  if (filter === "REVIEW_REQUIRED") return { status: "ACS_REVIEW_REQUIRED" };
   if (filter === "SYNC_ERROR") return { error: { not: null } };
   return {};
 }
@@ -72,13 +73,13 @@ export async function loader({ request }) {
     { recipientName: { contains: q, mode: "insensitive" } },
   ];
   const [shipments, grouped, syncErrorCount, alertSyncErrors, totalCount] = await Promise.all([
-    prisma.acsTrackingSnapshot.findMany({ where, orderBy: [{ fulfillmentCreatedAt: "desc" }, { lastCheckedAt: "desc" }], take: 500 }),
+    prisma.acsTrackingSnapshot.findMany({ where, orderBy: [{ orderCreatedAt: { sort: "desc", nulls: "last" } }, { fulfillmentCreatedAt: { sort: "desc", nulls: "last" } }, { lastCheckedAt: "desc" }], take: 500 }),
     prisma.acsTrackingSnapshot.groupBy({ by: ["status"], where: { shop: session.shop }, _count: { _all: true } }),
     prisma.acsTrackingSnapshot.count({ where: { shop: session.shop, error: { not: null } } }),
     prisma.acsTrackingSnapshot.count({ where: { shop: session.shop, error: { not: null }, status: { in: ALERT_STATUSES } } }),
     prisma.acsTrackingSnapshot.count({ where: { shop: session.shop } }),
   ]);
-  shipments.sort((a, b) => new Date(b.fulfillmentCreatedAt || b.lastCheckedAt) - new Date(a.fulfillmentCreatedAt || a.lastCheckedAt));
+  shipments.sort((a, b) => new Date(b.orderCreatedAt || b.fulfillmentCreatedAt || b.lastCheckedAt) - new Date(a.orderCreatedAt || a.fulfillmentCreatedAt || a.lastCheckedAt));
   const counts = Object.fromEntries(grouped.map((row) => [row.status, row._count._all]));
   return { shipments, counts, q, filter, shop: session.shop, syncErrorCount, alertSyncErrors, totalCount, lang };
 }
@@ -99,8 +100,8 @@ function localizedError(error, lang) {
 function fulfillmentLabel(status, lang) {
   if (!status) return "—";
   const names = {
-    en: { SUCCESS: "Fulfilled", FULFILLED: "Fulfilled", PARTIAL: "Partially fulfilled", RESTOCKED: "Restocked", OPEN: "Open", CANCELLED: "Cancelled", IN_TRANSIT: "In transit", DELIVERED: "Delivered", OUT_FOR_DELIVERY: "Out for delivery", FAILURE: "Delivery failure", READY_FOR_PICKUP: "Ready for pickup", PICKED_UP: "Picked up", DELAYED: "Delayed", ATTEMPTED_DELIVERY: "Attempted delivery" },
-    el: { SUCCESS: "Εκπληρώθηκε", FULFILLED: "Εκπληρώθηκε", PARTIAL: "Μερική εκπλήρωση", RESTOCKED: "Επιστράφηκε στο απόθεμα", OPEN: "Ανοιχτή", CANCELLED: "Ακυρώθηκε", IN_TRANSIT: "Σε μεταφορά", DELIVERED: "Παραδόθηκε", OUT_FOR_DELIVERY: "Προς παράδοση", FAILURE: "Αποτυχία παράδοσης", READY_FOR_PICKUP: "Για παραλαβή", PICKED_UP: "Παραλήφθηκε", DELAYED: "Καθυστέρηση", ATTEMPTED_DELIVERY: "Ανεπιτυχής προσπάθεια" },
+    en: { SUCCESS: "Fulfilled", FULFILLED: "Fulfilled", PARTIAL: "Partially fulfilled", RESTOCKED: "Restocked", OPEN: "Open", CANCELLED: "Cancelled", IN_TRANSIT: "In transit", DELIVERED: "Delivered", OUT_FOR_DELIVERY: "Out for delivery", FAILURE: "Return event (Shopify: Failure)", READY_FOR_PICKUP: "Ready for pickup", PICKED_UP: "Picked up", DELAYED: "Delayed", ATTEMPTED_DELIVERY: "Attempted delivery", LABEL_PRINTED: "Label printed", LABEL_PURCHASED: "Label purchased" },
+    el: { SUCCESS: "Εκπληρώθηκε", FULFILLED: "Εκπληρώθηκε", PARTIAL: "Μερική εκπλήρωση", RESTOCKED: "Επιστράφηκε στο απόθεμα", OPEN: "Ανοιχτή", CANCELLED: "Ακυρώθηκε", IN_TRANSIT: "Σε μεταφορά", DELIVERED: "Παραδόθηκε", OUT_FOR_DELIVERY: "Προς παράδοση", FAILURE: "Συμβάν επιστροφής (Shopify: Failure)", READY_FOR_PICKUP: "Για παραλαβή", PICKED_UP: "Παραλήφθηκε", DELAYED: "Καθυστέρηση", ATTEMPTED_DELIVERY: "Ανεπιτυχής προσπάθεια", LABEL_PRINTED: "Εκτυπώθηκε η ετικέτα", LABEL_PURCHASED: "Αγοράστηκε η ετικέτα" },
   };
   return names[lang][status] || status.replaceAll("_", " ").toLowerCase();
 }
@@ -118,7 +119,7 @@ export default function AcsTrackingPage() {
   const busy = fetcher.state !== "idle";
   const result = fetcher.data;
   const elapsed = syncStartedAt ? Math.max(0, Math.floor((now - syncStartedAt) / 1000)) : 0;
-  const attentionCount = ALERT_STATUSES.reduce((sum, status) => sum + (counts[status] || 0), 0) + syncErrorCount - alertSyncErrors;
+  const attentionCount = ALERT_STATUSES.reduce((sum, status) => sum + (counts[status] || 0), 0) + syncErrorCount - alertSyncErrors + (counts.ACS_REVIEW_REQUIRED || 0);
   const openReturns = (counts.RETURNING || 0) + (counts.RETURNED || 0);
 
   useEffect(() => {
@@ -171,19 +172,19 @@ export default function AcsTrackingPage() {
       <s-section>
         <div className="acs-filters" aria-label={t.title}>
           {FILTERS.map((key) => {
-            const names = { ALL: t.all, ALERTS: t.alerts, RETURNS: t.returnsFilter, PICKUP: t.pickup, DELIVERY: t.deliveryFilter, TRANSIT: t.transit, DELIVERED: t.deliveredFilter, LABEL_CREATED: t.labelCreated, SYNC_ERROR: t.syncError };
-            const n = key === "ALL" ? totalCount : key === "ALERTS" ? ALERT_STATUSES.reduce((sum, status) => sum + (counts[status] || 0), 0) : key === "RETURNS" ? openReturns : key === "SYNC_ERROR" ? syncErrorCount : key === "LABEL_CREATED" ? counts.LABEL_CREATED || 0 : key === "PICKUP" ? counts.READY_FOR_PICKUP || 0 : key === "DELIVERY" ? counts.OUT_FOR_DELIVERY || 0 : key === "TRANSIT" ? counts.IN_TRANSIT || 0 : counts.DELIVERED || 0;
+            const names = { ALL: t.all, ALERTS: t.alerts, RETURNS: t.returnsFilter, PICKUP: t.pickup, DELIVERY: t.deliveryFilter, TRANSIT: t.transit, DELIVERED: t.deliveredFilter, LABEL_CREATED: t.labelCreated, REVIEW_REQUIRED: t.reviewRequired, SYNC_ERROR: t.syncError };
+            const n = key === "ALL" ? totalCount : key === "ALERTS" ? ALERT_STATUSES.reduce((sum, status) => sum + (counts[status] || 0), 0) : key === "RETURNS" ? openReturns : key === "SYNC_ERROR" ? syncErrorCount : key === "LABEL_CREATED" ? counts.LABEL_CREATED || 0 : key === "REVIEW_REQUIRED" ? counts.ACS_REVIEW_REQUIRED || 0 : key === "PICKUP" ? counts.READY_FOR_PICKUP || 0 : key === "DELIVERY" ? counts.OUT_FOR_DELIVERY || 0 : key === "TRANSIT" ? counts.IN_TRANSIT || 0 : counts.DELIVERED || 0;
             return <button type="button" key={key} className={initialFilter === key ? "active" : ""} onClick={() => navigateWithParams({ status: key === "ALL" ? "" : key })}>{names[key]} <strong>{n}</strong></button>;
           })}
         </div>
         {shipments.length ? <div className="acs-table-wrap"><table className="acs-table">
           <thead><tr><th>{t.status}</th><th>{t.fulfillment}</th><th>{t.order}</th><th>{t.voucher}</th><th>{t.checkpoint}</th><th>{t.checked}</th></tr></thead>
           <tbody>{shipments.map((item) => {
-            const critical = ALERT_STATUSES.includes(item.status) || item.status === "RETURNING" || item.status === "RETURNED" || Boolean(item.error);
+            const critical = ALERT_STATUSES.includes(item.status) || item.status === "RETURNING" || item.status === "RETURNED" || item.status === "ACS_REVIEW_REQUIRED" || Boolean(item.error);
             const orderNumber = item.orderId?.split("/").pop();
             const age = item.fulfillmentCreatedAt && !item.fulfillmentDeliveredAt ? ageDays(item.fulfillmentCreatedAt) : null;
             return <tr key={item.id} className={critical ? "needs-attention" : ""}>
-              <td><span className={`status-pill state-${String(item.status).toLowerCase()} ${critical ? "critical" : ""}`}><i aria-hidden="true">{{DELIVERED:"✓",RETURNING:"↩",RETURNED:"↩",DELIVERY_PROBLEM:"!",DELIVERY_ATTEMPTED:"!",DELIVERY_DELAYED:"◷",READY_FOR_PICKUP:"⌂",OUT_FOR_DELIVERY:"➜",IN_TRANSIT:"●",LABEL_CREATED:"＋"}[item.status] || "·"}</i>{STATUS_LABELS[lang][item.status] || item.statusLabel}</span>{item.error ? <small className="sync-error">{t.syncIssue}: {localizedError(item.error, lang)}</small> : null}</td>
+              <td><span className={`status-pill state-${String(item.status).toLowerCase()} ${critical ? "critical" : ""}`}><i aria-hidden="true">{{DELIVERED:"✓",RETURNING:"↩",RETURNED:"↩",DELIVERY_PROBLEM:"!",DELIVERY_ATTEMPTED:"!",DELIVERY_DELAYED:"◷",READY_FOR_PICKUP:"⌂",OUT_FOR_DELIVERY:"➜",IN_TRANSIT:"●",LABEL_CREATED:"＋",ACS_REVIEW_REQUIRED:"!"}[item.status] || "·"}</i>{STATUS_LABELS[lang][item.status] || item.statusLabel}</span>{item.error ? <small className="sync-error">{t.syncIssue}: {localizedError(item.error, lang)}</small> : item.status === "ACS_REVIEW_REQUIRED" ? <small>{lang === "el" ? "Η αυτόματη παρακολούθηση σταμάτησε μετά από 90 ημέρες." : "Automatic polling stopped after 90 days."}</small> : null}</td>
               <td><strong>{fulfillmentLabel(item.fulfillmentStatus, lang)}</strong><small>{t.created}: {dateLabel(item.fulfillmentCreatedAt, lang)}</small>{item.fulfillmentDeliveredAt ? <small>{t.deliveredAt}: {dateLabel(item.fulfillmentDeliveredAt, lang)}</small> : age !== null ? <small>{t.age} {age} {age === 1 ? t.day : t.days}</small> : null}</td>
               <td>{item.orderId ? <a href={`https://${shop}/admin/orders/${orderNumber}`} target="_top" rel="noreferrer">{item.orderName || "—"}</a> : <strong>{item.orderName || "Manual shipment"}</strong>}<small>{item.recipientName || "—"}</small></td>
               <td><a href={`https://webapp.acscourier.net/track-shipment/${encodeURIComponent(item.voucherNo)}`} target="_blank" rel="noreferrer"><strong>{item.voucherNo}</strong> ↗</a>{item.reasonCode ? <small>{item.reasonCode}</small> : null}</td>
@@ -198,7 +199,7 @@ export default function AcsTrackingPage() {
         .acs-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px;margin:18px 0}.acs-kpis>div{border:1px solid #e5e1dc;border-radius:10px;padding:12px 14px;background:#fff;display:flex;flex-direction:column;gap:5px}.acs-kpis span,.acs-table small{color:#706d69;font-size:12px}.acs-kpis strong{font-size:21px;color:#282522}.acs-kpis .attention{border-color:#cf684c;background:#fff7f4}.acs-kpis .attention strong{color:#a63d25}
         .acs-toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:12px 0}.acs-toolbar form{display:flex;gap:8px;flex:1;min-width:270px}.acs-toolbar input{flex:1;min-width:140px;padding:10px 12px;border:1px solid #c8c5c1;border-radius:8px;font:inherit}.acs-wait{color:#755b40}.acs-result{color:#315f35}
         .acs-filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}.acs-filters button{border-radius:999px}.acs-filters button.active{background:#614a38;color:white;border-color:#614a38}.acs-filters strong{margin-left:4px}
-        .acs-table-wrap{overflow-x:auto}.acs-table{width:100%;border-collapse:collapse;font-size:13px}.acs-table th,.acs-table td{padding:11px 9px;border-bottom:1px solid #ece9e6;text-align:left;vertical-align:top}.acs-table th{font-weight:600;color:#605b56;white-space:nowrap}.acs-table td small{display:block;margin-top:4px;white-space:normal;min-width:110px;max-width:260px}.acs-table a{color:#59412f;font-weight:600}.acs-table tr.needs-attention{background:#fffaf8}.status-pill{display:inline-flex;align-items:center;gap:5px;border:1px solid #d5d0ca;border-radius:999px;padding:4px 8px;white-space:normal;background:#f6f6f7;color:#303030}.status-pill i{font-style:normal;font-weight:800}.state-delivered{background:#e4f3e8;color:#176b36;border-color:#a8d5b4}.state-returning,.state-returned{background:#fce8e6;color:#a12e20;border-color:#f2b8b5}.state-delivery_problem,.state-delivery_attempted,.state-delivery_delayed{background:#fff1d6;color:#7a4d00;border-color:#f1d59c}.state-ready_for_pickup{background:#e8eafa;color:#414a9b;border-color:#c5c9ed}.state-in_transit,.state-out_for_delivery{background:#e5f2fb;color:#145b89;border-color:#b6d8ef}.state-label_created{background:#f1f2f3;color:#50565c}.status-pill.critical{font-weight:650}.sync-error{color:#a33b25!important;font-weight:600}
+        .acs-table-wrap{overflow-x:auto}.acs-table{width:100%;border-collapse:collapse;font-size:13px}.acs-table th,.acs-table td{padding:11px 9px;border-bottom:1px solid #ece9e6;text-align:left;vertical-align:top}.acs-table th{font-weight:600;color:#605b56;white-space:nowrap}.acs-table td small{display:block;margin-top:4px;white-space:normal;min-width:110px;max-width:260px}.acs-table a{color:#59412f;font-weight:600}.acs-table tr.needs-attention{background:#fffaf8}.status-pill{display:inline-flex;align-items:center;gap:5px;border:1px solid #d5d0ca;border-radius:999px;padding:4px 8px;white-space:normal;background:#f6f6f7;color:#303030}.status-pill i{font-style:normal;font-weight:800}.state-delivered{background:#e4f3e8;color:#176b36;border-color:#a8d5b4}.state-returning,.state-returned{background:#fce8e6;color:#a12e20;border-color:#f2b8b5}.state-delivery_problem,.state-delivery_attempted,.state-delivery_delayed{background:#fff1d6;color:#7a4d00;border-color:#f1d59c}.state-ready_for_pickup{background:#e8eafa;color:#414a9b;border-color:#c5c9ed}.state-in_transit,.state-out_for_delivery{background:#e5f2fb;color:#145b89;border-color:#b6d8ef}.state-label_created{background:#f1f2f3;color:#50565c}.state-acs_review_required{background:#fff1d6;color:#7a4d00;border-color:#f1d59c}.status-pill.critical{font-weight:650}.sync-error{color:#a33b25!important;font-weight:600}
         @media(max-width:700px){.acs-head{flex-direction:column}.acs-lang{align-self:flex-end}.acs-table{min-width:860px}}
       `}</style>
     </s-page>

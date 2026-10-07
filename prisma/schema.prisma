@@ -63,6 +63,7 @@ model AcsTrackingSnapshot {
   shop           String
   orderId        String?
   orderName      String?
+  orderCreatedAt DateTime?
   fulfillmentId  String?
   fulfillmentStatus String?
   fulfillmentCreatedAt DateTime?
