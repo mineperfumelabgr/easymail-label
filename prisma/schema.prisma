@@ -78,6 +78,8 @@ model AcsTrackingSnapshot {
   lastCheckpoint String?
   lastLocation   String?
   lastEventAt    DateTime?
+  lastShopifyEventStatus String?
+  lastShopifyCheckpointAt DateTime?
   lastCheckedAt  DateTime @default(now())
   error          String?
 

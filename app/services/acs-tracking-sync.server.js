@@ -47,13 +47,14 @@ export function classifyAcsShipment(summary = {}, lastCheckpointAction = "") {
   if (Number(summary.returned_flag) === 1 && status === 7) return { status: "RETURNED", label: "Restituito al mittente" };
   if (Number(summary.returned_flag) === 1 || status === 6) return { status: "RETURNING", label: "In restituzione al mittente" };
   if (status === 4 && Number(summary.delivery_flag) === 1) return { status: "DELIVERED", label: "Consegnato al destinatario" };
-  if (reason === "ΑΔ1" || reason === "AD1") return { status: "READY_FOR_PICKUP", label: "Da ritirare presso ACS" };
-  if (["ΔΠ1", "DP1", "ΕΔ1", "ED1"].includes(reason)) return { status: "DELIVERY_PROBLEM", label: "Problema di consegna" };
-  if (["ΠΑ1", "ΠΑ2", "ΠΑ4", "PA1", "PA2", "PA4"].includes(reason)) return { status: "DELIVERY_DELAYED", label: "Consegna riprogrammata" };
-  if (status === 5 && /ΠΡΟΣ ΠΑΡΑΔΟΣΗ|ΠΡΟΣ ΔΙΑΝΟΜΗ|OUT FOR DELIVERY|ΠΑΡΑΔΟΣΗ ΣΤΟΝ ΠΑΡΑΛΗΠΤΗ/.test(checkpoint)) return { status: "OUT_FOR_DELIVERY", label: "In consegna" };
-  if (status === 1 || status === 2) return { status: "DELIVERY_PROBLEM", label: "Problema di consegna" };
-  if (status === 3) return { status: "DELIVERY_ATTEMPTED", label: "Tentativo di consegna non riuscito" };
-  if (status === 5) return { status: "IN_TRANSIT", label: "Spedito / in transito" };
+  if (["ΑΔ1", "AD1", "ΑΔ8", "AD8"].includes(reason) || /ΑΝΑΜΟΝΗ ΓΙΑ ΠΑΡΑΛΑΒΗ|READY FOR PICKUP/.test(checkpoint)) return { status: "READY_FOR_PICKUP", label: "Da ritirare presso ACS" };
+  if (["ΠΑ1", "ΠΑ2", "ΠΑ4", "PA1", "PA2", "PA4", "ΔΠ1", "DP1", "ΕΔ1", "ED1"].includes(reason)) return { status: "DELIVERY_DELAYED", label: "Consegna in ritardo o riprogrammata" };
+  if (/ΠΡΟΣ ΠΑΡΑΔΟΣΗ|ΠΡΟΣ ΔΙΑΝΟΜΗ|OUT FOR DELIVERY|ΠΑΡΑΔΟΣΗ ΣΤΟΝ ΠΑΡΑΛΗΠΤΗ/.test(checkpoint)) return { status: "OUT_FOR_DELIVERY", label: "In consegna" };
+  if (status === 3 || ["ΑΣ1", "AS1"].includes(reason)) return { status: "DELIVERY_ATTEMPTED", label: "Tentativo di consegna non riuscito" };
+  if (["ΛΣ1", "LS1", "ΛΣ3", "LS3"].includes(reason)) return { status: "DELIVERY_DELAYED", label: "Verificare indirizzo o destinatario" };
+  if (["ΑΠ1", "AP1", "ΑΠ2", "AP2", "ΑΠ3", "AP3", "ΑΠ4", "AP4"].includes(reason)) return { status: "DELIVERY_ATTEMPTED", label: "Problema rilevato durante la consegna" };
+  if (status === 1) return { status: "DELIVERY_DELAYED", label: "Consegna non completata" };
+  if (status === 2 || status === 5) return { status: "IN_TRANSIT", label: "Spedito / in transito" };
   if (status === 4) return { status: "IN_TRANSIT", label: "In verifica ACS" };
   return { status: "UNKNOWN", label: "Stato ACS da verificare" };
 }
@@ -62,15 +63,18 @@ export function mapCheckpoint(action = "", summary = {}) {
   const text = normalizeText(action);
   if (/SMS|MESSAG|ΕΙΔΟΠΟΙΗΣ|ΕΚΤΥΠΩΣ|ΕΤΙΚΕΤ|VOUCHER|LABEL/.test(text)) return null;
   if (/^(?:ΠΑΡΑΔΟΣΗ|ΠΑΡΑΔΟΘΗΚΕ|DELIVERED)(?:\s|$)/.test(text)) {
-    if (Number(summary.returned_flag) === 1) return "FAILURE";
+    if (Number(summary.returned_flag) === 1) return null;
     return Number(summary.delivery_flag) === 1 && Number(summary.shipment_status) === 4 ? "DELIVERED" : null;
   }
   if (/ΠΡΟΣ ΠΑΡΑΔΟΣΗ|ΠΡΟΣ ΔΙΑΝΟΜΗ|OUT FOR DELIVERY|ΠΑΡΑΔΟΣΗ ΣΤΟΝ ΠΑΡΑΛΗΠΤΗ/.test(text)) return "OUT_FOR_DELIVERY";
   if (/ΑΠΩΝ|ΑΔΥΝΑΜΙΑ|ΑΡΝΗΣΗ|ΜΗ ΑΠΟΔΟΧΗ|ΑΓΝΩΣΤΟΣ ΠΑΡΑΛΗΠΤΗΣ|ATTEMPT|ΜΗ ΠΑΡΑΔΟΣΗ/.test(text)) return "ATTEMPTED_DELIVERY";
-  if (/ΠΡΟΣ ΕΠΙΣΤΡΟΦΗ|ΕΠΙΣΤΡΟΦΗ|RETURN/.test(text)) return "FAILURE";
-  if (/ΑΦΙΞΗ ΣΕ ΚΑΤΑΣΤΗΜΑ|ΑΝΑΜΟΝΗ ΓΙΑ ΠΑΡΑΛΑΒΗ/.test(text) && ["ΑΔ1", "AD1"].includes(normalizeText(summary.non_delivery_reason_code))) return "READY_FOR_PICKUP";
-  if (/ΠΑΡΑΛΑΒΗ ΑΠΟ ΑΠΟΣΤΟΛΕΑ|ΑΝΑΧΩΡΗΣΗ|ΑΦΙΞΗ|ΚΑΤΑΣΤΗΜΑ|ΔΙΑΚΙΝΗΣΗ|IN TRANSIT|PICKUP/.test(text)) return "IN_TRANSIT";
-  return text ? "IN_TRANSIT" : null;
+  if (/ΠΡΟΣ ΕΠΙΣΤΡΟΦΗ|ΕΠΙΣΤΡΟΦΗ|RETURN/.test(text)) return [6, 7].includes(Number(summary.shipment_status)) ? "FAILURE" : null;
+  if (/ΑΝΑΜΟΝΗ ΓΙΑ ΠΑΡΑΛΑΒΗ|READY FOR PICKUP/.test(text) || (/ΑΦΙΞΗ ΣΕ ΚΑΤΑΣΤΗΜΑ/.test(text) && ["ΑΔ1", "AD1", "ΑΔ8", "AD8"].includes(normalizeText(summary.non_delivery_reason_code)))) return "READY_FOR_PICKUP";
+  if (/ΠΑΡΑΛΑΒΗ ΑΠΟ ΑΠΟΣΤΟΛΕΑ|PICKED UP FROM SENDER|ΠΑΡΕΛΗΦΘΗ ΑΠΟ ΑΠΟΣΤΟΛΕΑ/.test(text)) return "CARRIER_PICKED_UP";
+  const reason = normalizeText(summary.non_delivery_reason_code);
+  if (["ΠΑ1", "ΠΑ2", "ΠΑ4", "PA1", "PA2", "PA4", "ΔΠ1", "DP1", "ΕΔ1", "ED1", "ΛΣ1", "LS1", "ΛΣ3", "LS3"].includes(reason)) return "DELAYED";
+  if (/ΑΝΑΧΩΡΗΣΗ|ΑΦΙΞΗ|ΚΑΤΑΣΤΗΜΑ|ΔΙΑΚΙΝΗΣΗ|IN TRANSIT|TRANSIT|HUB|ΠΡΟΣ ΠΡΟΟΡΙΣΜΟ/.test(text)) return "IN_TRANSIT";
+  return null;
 }
 
 function summaryEventStatus(status) {
@@ -80,7 +84,6 @@ function summaryEventStatus(status) {
     OUT_FOR_DELIVERY: "OUT_FOR_DELIVERY",
     DELIVERY_ATTEMPTED: "ATTEMPTED_DELIVERY",
     DELIVERY_DELAYED: "DELAYED",
-    DELIVERY_PROBLEM: "FAILURE",
     RETURNING: "FAILURE",
     RETURNED: "FAILURE",
     DELIVERED: "DELIVERED",
@@ -115,6 +118,16 @@ async function graph(admin, query, variables) {
   const json = await response.json();
   if (json.errors?.length) throw new Error(json.errors.map((e) => e.message).join("; "));
   return json.data;
+}
+
+async function createShopifyEvent(admin, fulfillmentId, status, happenedAt, message, city) {
+  const data = await graph(admin, CREATE_EVENT, { event: {
+    fulfillmentId, status, happenedAt, message: String(message || "").slice(0, 255),
+    ...(city ? { city } : {}), country: "GR",
+  } });
+  const payload = data.fulfillmentEventCreate;
+  if (payload.userErrors?.length) throw new Error(payload.userErrors.map((e) => e.message).join("; "));
+  return payload.fulfillmentEvent;
 }
 
 export async function runAcsTrackingSync(admin, shop) {
@@ -173,7 +186,19 @@ export async function runAcsTrackingSync(admin, shop) {
         try {
           const oldSnapshot = await prisma.acsTrackingSnapshot.findUnique({ where: { shop_voucherNo: { shop, voucherNo: String(number) } } });
           const currentEvents = (fulfillment.events?.edges || []).map((edge) => edge.node);
-          if (oldSnapshot?.status === "DELIVERED" && currentEvents.some((event) => event.status === "DELIVERED")) {
+          const voucherEvents = currentEvents.filter((event) => String(event.message || "").includes(`ACS ${number}:`))
+            .sort((a, b) => new Date(a.happenedAt).getTime() - new Date(b.happenedAt).getTime());
+          const latestVoucherEvent = voucherEvents.at(-1);
+          if (oldSnapshot?.status === "DELIVERED") {
+            if (oldSnapshot.lastShopifyEventStatus !== "DELIVERED" && latestVoucherEvent?.status !== "DELIVERED") {
+              const happenedAt = oldSnapshot.lastEventAt?.toISOString?.() || new Date().toISOString();
+              await createShopifyEvent(admin, fulfillment.id, "DELIVERED", happenedAt, `ACS ${number}: ACS confirms delivery to the recipient.`);
+              result.created++;
+            }
+            await prisma.acsTrackingSnapshot.update({
+              where: { shop_voucherNo: { shop, voucherNo: String(number) } },
+              data: { lastShopifyEventStatus: "DELIVERED", lastCheckedAt: new Date() },
+            });
             packageStates.push({ number, status: oldSnapshot.status });
             result.skipped++;
             continue;
@@ -203,6 +228,12 @@ export async function runAcsTrackingSync(admin, shop) {
               create: waitingSnapshot,
               update: { ...waitingSnapshot, status: oldSnapshot?.status && !["SYNC_ERROR", "LABEL_CREATED"].includes(oldSnapshot.status) ? oldSnapshot.status : "LABEL_CREATED", statusLabel: oldSnapshot?.status && !["SYNC_ERROR", "LABEL_CREATED"].includes(oldSnapshot.status) ? oldSnapshot.statusLabel : waitingSnapshot.statusLabel },
             });
+            const isAwaitingFirstScan = !oldSnapshot || ["SYNC_ERROR", "LABEL_CREATED"].includes(oldSnapshot.status);
+            if (isAwaitingFirstScan && oldSnapshot?.lastShopifyEventStatus !== "LABEL_PRINTED" && latestVoucherEvent?.status !== "LABEL_PRINTED") {
+              await createShopifyEvent(admin, fulfillment.id, "LABEL_PRINTED", fulfillment.createdAt || new Date().toISOString(), `ACS ${number}: ACS label created; awaiting carrier pickup.`);
+              result.created++;
+              await prisma.acsTrackingSnapshot.update({ where: { shop_voucherNo: { shop, voucherNo: String(number) } }, data: { lastShopifyEventStatus: "LABEL_PRINTED" } });
+            }
             result.snapshots++;
             packageStatus = oldSnapshot?.status && !["SYNC_ERROR", "LABEL_CREATED"].includes(oldSnapshot.status) ? oldSnapshot.status : "LABEL_CREATED";
             packageStates.push({ number, status: packageStatus });
@@ -237,63 +268,70 @@ export async function runAcsTrackingSync(admin, shop) {
           await prisma.acsTrackingSnapshot.upsert({
             where: { shop_voucherNo: { shop, voucherNo: String(number) } },
             create: snapshot,
-            update: snapshot,
+            update: {
+              ...snapshot,
+              lastShopifyEventStatus: oldSnapshot?.lastShopifyEventStatus || null,
+              lastShopifyCheckpointAt: oldSnapshot?.lastShopifyCheckpointAt || null,
+            },
           });
           result.snapshots++;
           if (["DELIVERY_PROBLEM", "DELIVERY_ATTEMPTED", "DELIVERY_DELAYED", "RETURNING", "RETURNED"].includes(classified.status)) result.alerts++;
           packageStatus = classified.status;
 
-          const existing = (fulfillment.events?.edges || []).map((edge) => edge.node);
-          for (const checkpoint of details) {
+          const summaryStatus = summaryEventStatus(classified.status);
+          const checkpointStatus = mapCheckpoint(lastCheckpoint?.checkpoint_action, summary);
+          const specificCheckpointStatuses = ["CARRIER_PICKED_UP", "READY_FOR_PICKUP", "OUT_FOR_DELIVERY", "ATTEMPTED_DELIVERY", "DELAYED"];
+          const finalStatus = ["DELIVERED", "RETURNING", "RETURNED"].includes(classified.status)
+            ? summaryStatus
+            : (specificCheckpointStatuses.includes(checkpointStatus) ? checkpointStatus : summaryStatus);
+          const latestCheckpointAt = eventTime(lastCheckpoint?.checkpoint_date_time);
+          const summaryEventAt = eventTime(summary.delivery_date) || latestCheckpointAt || new Date().toISOString();
+          const where = { shop_voucherNo: { shop, voucherNo: String(number) } };
+          let lastSentStatus = oldSnapshot?.lastShopifyEventStatus || latestVoucherEvent?.status || null;
+          const previousCursor = oldSnapshot?.lastShopifyCheckpointAt || null;
+          const newCheckpoints = previousCursor
+            ? checkpoints.filter((item) => {
+                const at = eventTime(item.checkpoint_date_time);
+                return at && new Date(at) > previousCursor;
+              })
+            : [];
+          for (const checkpoint of newCheckpoints) {
             const status = mapCheckpoint(checkpoint.checkpoint_action, summary);
             const happenedAt = eventTime(checkpoint.checkpoint_date_time);
-            if (!status || !happenedAt) { result.skipped++; continue; }
+            if (!status || !happenedAt || status === lastSentStatus) { result.skipped++; continue; }
             const detailMessage = [checkpoint.checkpoint_action, checkpoint.checkpoint_notes, checkpoint.checkpoint_location]
-              .map((v) => String(v || "").trim()).filter(Boolean).join(" · ").slice(0, 255);
-            const returnMarker = status === "FAILURE" && (classified.status === "RETURNING" || classified.status === "RETURNED")
-              ? ` — ${classified.label.toUpperCase()}` : "";
-            const message = `ACS ${number}: ${detailMessage}${returnMarker}`.slice(0, 255);
-            const duplicate = existing.some((event) => event.happenedAt === happenedAt && event.message === message);
-            if (duplicate) { result.skipped++; continue; }
-            const data = await graph(admin, CREATE_EVENT, { event: {
-              fulfillmentId: fulfillment.id,
-              status,
-              happenedAt,
-              message,
-              city: checkpoint.checkpoint_location || undefined,
-              country: "GR",
-            } });
-            const payload = data.fulfillmentEventCreate;
-            if (payload.userErrors?.length) throw new Error(payload.userErrors.map((e) => e.message).join("; "));
-            existing.push(payload.fulfillmentEvent);
+              .map((v) => String(v || "").trim()).filter(Boolean).join(" · ");
+            await createShopifyEvent(admin, fulfillment.id, status, happenedAt, `ACS ${number}: ${detailMessage || classified.label}`, checkpoint.checkpoint_location);
             result.created++;
+            lastSentStatus = status;
+            await prisma.acsTrackingSnapshot.update({ where, data: { lastShopifyEventStatus: status } });
           }
-          const finalStatus = summaryEventStatus(classified.status);
-          const summaryEventAt = eventTime(summary.delivery_date) || snapshot.lastEventAt || new Date().toISOString();
-          const summaryTime = new Date(summaryEventAt).getTime();
-          const alreadyRepresented = finalStatus && existing.some((event) =>
-            event.status === finalStatus &&
-            Number.isFinite(new Date(event.happenedAt).getTime()) && new Date(event.happenedAt).getTime() >= summaryTime &&
-            (classified.status !== "RETURNED" || /RESTITUITO AL MITTENTE/.test(event.message || ""))
-          );
-          if (finalStatus && !alreadyRepresented) {
+          // On the first sync after installing this version, do not replay the
+          // full ACS checkpoint history. The saved state or latest old Shopify
+          // event seeds the current state; only new checkpoints are replayed.
+          if (finalStatus && finalStatus !== lastSentStatus) {
+            const isTerminalReturn = classified.status === "RETURNING" || classified.status === "RETURNED";
             const stateMessage = classified.status === "DELIVERED"
-              ? `ACS confirms delivery to the recipient (shipment_status 4; delivery_flag 1).`
-              : classified.status === "RETURNED"
-                ? `ACS confirms return to sender: RESTITUITO AL MITTENTE (shipment_status 7; returned_flag 1).`
+              ? "ACS confirms delivery to the recipient."
+              : isTerminalReturn
+                ? `ACS confirms return to sender: ${classified.label}.`
                 : `ACS shipment state: ${classified.label}${snapshot.reasonCode ? ` (${snapshot.reasonCode})` : ""}.`;
-            const data = await graph(admin, CREATE_EVENT, { event: {
-              fulfillmentId: fulfillment.id,
-              status: finalStatus,
-              happenedAt: summaryEventAt,
-              message: `ACS ${number}: ${stateMessage}`.slice(0, 255),
-              country: "GR",
-            } });
-            const payload = data.fulfillmentEventCreate;
-            if (payload.userErrors?.length) throw new Error(payload.userErrors.map((e) => e.message).join("; "));
-            existing.push(payload.fulfillmentEvent);
+            await createShopifyEvent(admin, fulfillment.id, finalStatus, summaryEventAt, `ACS ${number}: ${stateMessage}`, lastCheckpoint?.checkpoint_location);
             result.created++;
+            lastSentStatus = finalStatus;
+          } else {
+            result.skipped++;
           }
+          // Persist the checkpoint cursor even when every new checkpoint mapped
+          // to the state already sent. This prevents the next cron from replaying
+          // those same scans while still allowing later state transitions.
+          await prisma.acsTrackingSnapshot.update({
+            where,
+            data: {
+              ...(lastSentStatus ? { lastShopifyEventStatus: lastSentStatus } : {}),
+              ...(latestCheckpointAt ? { lastShopifyCheckpointAt: new Date(latestCheckpointAt) } : {}),
+            },
+          });
         } catch (error) {
           let previousStatus = null;
           try {
