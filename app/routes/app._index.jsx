@@ -11,7 +11,7 @@ import { applyGenikiTag } from "../services/geniki-operations.server";
 import { PDFDocument } from "pdf-lib";
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
-import { adminGraphql } from "../services/acs-create-label.server";
+import { adminGraphql, parseCodAmountOverride, parsePickupDate } from "../services/acs-create-label.server";
 import {
   defaults,
   issue,
@@ -54,6 +54,7 @@ export async function loader({ request }) {
     date = p.get("date") || athensDay(new Date());
   let orders = [],
     rows = [];
+  const employees = view === "orders" ? await db.employee.findMany({where:{shop},select:{id:true,name:true},orderBy:{name:"asc"}}) : [];
   let next = null;
   if (view === "orders") {
     let response;
@@ -65,7 +66,7 @@ export async function loader({ request }) {
     );
     } catch (error) {
       if (!/not approved to access the Order object|protected customer data/i.test(error.message)) throw error;
-      return { view, rules, orders, rows, country, carrier, date, next,
+      return { view, rules, orders, rows, country, carrier, date, employees, next,
         accessNotice: "Shopify has restricted order access. In the Dev Dashboard, open this app’s Settings → Access requests → Protected customer data. Enable access, save, and reload this page." };
     }
     const { data } = response;
@@ -142,7 +143,7 @@ export async function loader({ request }) {
       rows.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     }
   }
-  return { view, rules, orders, rows, country, carrier, date, next };
+  return { view, rules, orders, rows, country, carrier, date, employees, next };
 }
 
 export async function action({ request }) {
@@ -152,6 +153,13 @@ export async function action({ request }) {
   } = await authenticate.admin(request);
   const f = await request.formData(),
     intent = f.get("intent");
+  if (intent === "addEmployee") {
+    const name=String(f.get("name")||"").trim().replace(/\s+/g," ");
+    if (!name || name.length>100) return {messages:["Enter an employee name (1–100 characters)."]};
+    const normalizedName=name.toLocaleLowerCase();
+    await db.employee.upsert({where:{shop_normalizedName:{shop,normalizedName}},create:{shop,name,normalizedName},update:{}});
+    return {messages:["Employee available in Prepared by."]};
+  }
   if (intent === "rules") {
     const entries = Object.keys(defaults).map((country) => ({
       shop,
@@ -206,18 +214,35 @@ export async function action({ request }) {
     return { messages: ["Select 1–50 rows."] };
   const messages = [];
   if (intent === "issue") {
-    const weight = Number(f.get("weight"));
-    if (!Number.isFinite(weight) || weight <= 0)
-      return { messages: ["Enter the packed weight in kg."] };
+    const employee=await db.employee.findFirst({where:{shop,id:String(f.get("employee")||"")},select:{name:true}});
+    if (!employee) return {messages:["Select the employee preparing these orders."]};
+    const issued=[];
     for (const id of ids) {
       try {
-        const r = await issue(admin, shop, id, f.get("carrier-" + id), weight);
+        const carrier=f.get("carrier-"+id);
+        const pieces=Number(f.get("pieces-"+id));
+        const weight=Number(f.get("weight-"+id)||1);
+        if(!Number.isInteger(pieces)||pieces<1||pieces>5)throw new Error("Choose between 1 and 5 parcels.");
+        if(!Number.isFinite(weight)||weight<=0)throw new Error("Enter a positive shipment weight.");
+        const mode=f.get("cod-"+id);
+        const r = await issue(admin, shop, id, carrier, weight, {
+          employeeName:employee.name,pieces,pickupDate:carrier==="ACS"?parsePickupDate(f.get("pickup-"+id)):null,
+          codOverride:mode==="yes"?true:mode==="no"?false:null,
+          codAmount:carrier==="ACS"&&mode==="yes"?parseCodAmountOverride(f.get("amount-"+id)):null,
+        });
+        issued.push(r.id);
+        if (r.preparedBy) {
+          try {
+            const {data}=await adminGraphql(admin,`mutation($id:ID!,$tags:[String!]!){tagsAdd(id:$id,tags:$tags){userErrors{message}}}`,{id,tags:[r.preparedBy]});
+            if(data.tagsAdd.userErrors.length)throw new Error(data.tagsAdd.userErrors[0].message);
+          }catch(e){messages.push(r.orderName+" · Voucher issued; employee tag pending: "+e.message)}
+        }
         messages.push(r.orderName + " · " + r.carrier + " · " + r.voucher);
       } catch (e) {
         messages.push(id.split("/").pop() + " · " + e.message);
       }
     }
-    return { messages };
+    return { messages, issued };
   }
   const rows = await db.courierShipment.findMany({
     where: { shop, id: { in: ids } },
@@ -292,7 +317,7 @@ export async function action({ request }) {
 }
 
 export default function Workspace() {
-  const { view, rules, orders, rows, country, carrier, date, next, accessNotice } =
+  const { view, rules, orders, rows, country, carrier, date, next, employees, accessNotice } =
       useLoaderData(),
     result = useActionData(),
     busy = useNavigation().state !== "idle";
@@ -373,6 +398,7 @@ export default function Workspace() {
             <button>Filter</button>
           </Form>
         )}
+        {view==="orders" && <details open={!employees.length || undefined}><summary>Add an employee</summary><Form method="post"><label>Employee name <input name="name" required maxLength={100}/></label><button name="intent" value="addEmployee">Add employee</button></Form></details>}
         <Form method="post" key={view + p.toString()}>
           <fieldset disabled={busy}>
             {view === "rules" ? (
@@ -399,16 +425,8 @@ export default function Workspace() {
                 <div className="controls">
                   {view === "orders" ? (
                     <>
-                      <label>
-                        Geniki weight per parcel (kg){" "}
-                        <input
-                          type="number"
-                          step=".01"
-                          min=".01"
-                          name="weight"
-                          defaultValue="1"
-                        />
-                      </label>
+                      <label>Prepared by <select name="employee" required defaultValue=""><option value="">Select employee</option>{employees.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></label>
+                      <Link to={"/app/employees?"+p}>Manage employees</Link>
                       <button name="intent" value="issue">
                         Generate selected vouchers
                       </button>
@@ -442,6 +460,7 @@ export default function Workspace() {
                         <th>Order</th>
                         <th>Country</th>
                         <th>Courier</th>
+                        {view==="orders"?<th>Shipment options</th>:<th>Prepared by · Parcels</th>}
                         {view !== "orders" && (
                           <>
                             <th>Voucher</th>
@@ -502,6 +521,13 @@ export default function Workspace() {
                               r.carrier
                             )}
                           </td>
+                          {view==="orders"?<td><div className="parcel-controls">
+                            <label>Parcels <select name={"pieces-"+r.id} defaultValue="1">{[1,2,3,4,5].map(n=><option key={n}>{n}</option>)}</select></label>
+                            {(choices[r.id]||rules[r.shippingAddress.countryCodeV2])==="Geniki"?<label>Total kg <input type="number" name={"weight-"+r.id} step=".01" min=".01" defaultValue="1"/></label>:<details><summary>ACS options</summary>
+                            <label>Pickup <input type="date" name={"pickup-"+r.id} defaultValue={date}/></label>
+                            <label>COD <select name={"cod-"+r.id} defaultValue="auto"><option value="auto">From order</option><option value="yes">Collect on delivery</option><option value="no">No collection</option></select></label>
+                            <label>COD override (€) <input type="number" name={"amount-"+r.id} step=".01" min=".01" placeholder="Order total"/></label>
+                            </details>}</div></td>:<td>{r.preparedBy||"—"} · {r.pieces||r.labels?.length||"—"}</td>}
                           {view !== "orders" && (
                             <>
                               <td>{r.carrier==="Geniki" && r.voucher?<Link to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.id})}>{r.voucher}</Link>:r.voucher||"—"}</td>
@@ -573,6 +599,7 @@ export default function Workspace() {
             ))}
           </div>
         )}
+        {result?.issued?.length>0 && <Form method="post">{result.issued.map(id=><input key={id} type="hidden" name="selected" value={id}/>)}<button name="intent" value="print" disabled={busy}>Print generated labels in one PDF</button></Form>}
         {result?.pdf && (
           <a
             download="courier-labels.pdf"

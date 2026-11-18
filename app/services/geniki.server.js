@@ -129,3 +129,9 @@ export async function syncGenikiTracking(db, shop, applyTag) {
   }
   return {checked:rows.length,errors};
 }
+
+export function genikiParcelNumbers(master, records, expectedPieces) {
+  const numbers = [...new Set([master, ...[records].flat().map(record => record?.VoucherNo)].filter(Boolean))];
+  if (numbers.length < (expectedPieces || 1)) throw new Error("Geniki has not returned all parcel numbers. Retry to retrieve the existing shipment.");
+  return numbers;
+}

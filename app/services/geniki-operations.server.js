@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import db from "../db.server";
 import { adminGraphql } from "./acs-create-label.server";
-import { genikiLive, genikiSandbox } from "./geniki.server";
+import { genikiLive, genikiSandbox, genikiParcelNumbers } from "./geniki.server";
 
 
 export async function applyGenikiTag(admin, row, status) {
@@ -32,7 +32,7 @@ export async function createGenikiParcel(
   const where = { shop_orderId_environment: { shop, orderId, environment } };
   let row = await db.courierShipment.findUnique({ where });
   if (row?.voucher) return row;
-  let number, jobId;
+  let number, jobId, records;
   if (row) {
     const found = await api.lookup(key, row.reference);
     const job = found.Jobs?.VoucherJob;
@@ -40,6 +40,7 @@ export async function createGenikiParcel(
       throw new Error("Previous request requires verification with Geniki.");
     number = job.Voucher?.VoucherNo;
     jobId = job.Id;
+    records = job.SubVouchers?.Record;
   } else {
     row = await db.courierShipment.create({
       data: {
@@ -61,7 +62,7 @@ export async function createGenikiParcel(
       City: fields.city,
       Telephone: fields.phone,
       Zip: fields.zip,
-      Pieces: 1,
+      Pieces: row.pieces || 1,
       Weight: fields.weight,
       Services: fields.cod ? "ΑΜ" : "",
       CodAmount: fields.cod || 0,
@@ -70,6 +71,7 @@ export async function createGenikiParcel(
     });
     jobId = result.JobId;
     number = result.Voucher;
+    records = result.SubVouchers?.Record;
   }
   if (!number || !jobId) throw new Error("Geniki did not confirm the voucher.");
   return db.courierShipment.update({
@@ -77,7 +79,7 @@ export async function createGenikiParcel(
     data: {
       jobId: String(jobId),
       voucher: number,
-      labels: [number],
+      labels: genikiParcelNumbers(number, records, row.pieces),
       status: extra.previousId ? "Label issued" : "Ready for pickup",
     },
   });
@@ -134,16 +136,18 @@ export async function replaceGeniki(admin, shop, previousId, weight) {
       weight,
       cod: amount,
     },
-    { previousId: prior.id, sourceOrderId: orderId },
+    { previousId: prior.id, sourceOrderId: orderId, preparedBy:prior.preparedBy, pieces:prior.pieces || 1 },
   );
   if (row.fulfillmentId) return row;
+  const newNumbers=row.labels || [row.voucher];
+  const replaced=new Set([...(prior.labels || [prior.voucher]), ...newNumbers]);
   const info = f.trackingInfo.filter(
-    (t) => t.number !== prior.voucher && t.number !== row.voucher,
+    (t) => !replaced.has(t.number),
   );
-  const numbers = [...info.map((t) => t.number), row.voucher];
+  const numbers = [...info.map((t) => t.number), ...newNumbers];
   const urls = [
     ...info.map((t) => t.url),
-    "https://www.taxydromiki.com/en/track/" + row.voucher,
+    ...newNumbers.map(n=>"https://www.taxydromiki.com/en/track/" + n),
   ];
   const result = await adminGraphql(
     admin,

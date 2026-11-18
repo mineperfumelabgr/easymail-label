@@ -85,3 +85,4 @@
 .courier footer {
   padding: 6px;
 }
+.courier .parcel-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.courier .parcel-controls input[type=number]{width:6em}.courier .parcel-controls details[open] label{display:block;margin-top:6px}

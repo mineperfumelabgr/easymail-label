@@ -152,6 +152,8 @@ model CourierShipment {
   returnPending Boolean @default(false)
   returnSerial String?
   previousId String? @unique
+  preparedBy String?
+  pieces Int?
   fulfillmentPlan Json?
   status String @default("Creating")
   fulfillmentId String?

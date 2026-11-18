@@ -139,7 +139,7 @@ export async function action({ request }) {
       if (!row.voucher || row.status === "Cancelled")
         throw new Error("No printable voucher");
       const api = row.environment === "test" ? genikiSandbox : genikiLive;
-      const pdf = await api.pdf(await api.authenticate(), row.voucher);
+      const pdf = await api.pdf(await api.authenticate(), row.labels || [row.voucher]);
       return {
         message: "Original label ready.",
         pdf: pdf.toString("base64"),

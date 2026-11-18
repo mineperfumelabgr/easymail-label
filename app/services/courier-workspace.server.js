@@ -5,7 +5,7 @@ import {
   createOrReuseAcsLabel,
   todayYMD,
 } from "./acs-create-label.server";
-import { genikiLive, genikiSandbox, isCourierTestShop } from "./geniki.server";
+import { genikiLive, genikiSandbox, genikiParcelNumbers, isCourierTestShop } from "./geniki.server";
 
 export const defaults = { GR: "ACS", CY: "Geniki", BG: "Geniki" };
 export async function rulesFor(shop) {
@@ -16,7 +16,7 @@ export async function rulesFor(shop) {
   };
 }
 
-export async function issue(admin, shop, orderId, carrier, weight) {
+export async function issue(admin, shop, orderId, carrier, weight, options = {}) {
   if (!["ACS", "Geniki"].includes(carrier)) throw new Error("Choose a courier");
   const { data } = await adminGraphql(
     admin,
@@ -104,6 +104,8 @@ export async function issue(admin, shop, orderId, carrier, weight) {
         orderName: order.name,
         country: address.countryCodeV2,
         carrier,
+        preparedBy: order.acs?.value ? null : options.employeeName,
+        pieces: order.acs?.value ? null : options.pieces || 1,
         reference: randomUUID(),
         fulfillmentPlan: groups.map(({ location, ...plan }) => plan),
       },
@@ -114,7 +116,10 @@ export async function issue(admin, shop, orderId, carrier, weight) {
     const r = await createOrReuseAcsLabel({
       admin,
       orderGid: orderId,
-      requestedPickupDate: todayYMD(),
+      requestedPickupDate: options.pickupDate || todayYMD(),
+      pieces: options.pieces || 1,
+      codOverride: options.codOverride ?? null,
+      codAmountOverride: options.codAmount ?? null,
     });
     return db.courierShipment.update({
       where: { id: row.id },
@@ -126,7 +131,7 @@ export async function issue(admin, shop, orderId, carrier, weight) {
     });
   }
   if (!row.voucher) {
-    let voucher, jobId;
+    let voucher, jobId, subVouchers;
     if (fresh) {
       const r = await api.create(key, {
         OrderId: row.reference,
@@ -136,7 +141,7 @@ export async function issue(admin, shop, orderId, carrier, weight) {
         City: address.city,
         Telephone: address.phone || "",
         Zip: address.zip,
-        Pieces: 1,
+        Pieces: row.pieces || 1,
         Weight: weight,
         Services: cod && outstanding > 0 ? "ΑΜ" : "",
         CodAmount: cod ? outstanding : 0,
@@ -145,6 +150,7 @@ export async function issue(admin, shop, orderId, carrier, weight) {
       });
       voucher = r.Voucher;
       jobId = r.JobId;
+      subVouchers = r.SubVouchers?.Record;
     } else {
       const r = await api.lookup(key, row.reference);
       const job = r.Jobs?.VoucherJob;
@@ -154,14 +160,16 @@ export async function issue(admin, shop, orderId, carrier, weight) {
         );
       voucher = job.Voucher?.VoucherNo;
       jobId = job.Id;
+      subVouchers = job.SubVouchers?.Record;
     }
     if (!voucher || !jobId) throw new Error("Missing Geniki voucher details");
+    const labels = genikiParcelNumbers(voucher, subVouchers, row.pieces);
     row = await db.courierShipment.update({
       where: { id: row.id },
       data: {
         voucher,
         jobId: String(jobId),
-        labels: [voucher],
+        labels,
         status: "Label issued",
       },
     });
@@ -189,10 +197,8 @@ export async function issue(admin, shop, orderId, carrier, weight) {
         lineItemsByFulfillmentOrder: row.fulfillmentPlan,
         trackingInfo: {
           company: "Geniki Tachydromiki",
-          number: row.voucher,
-          url:
-            "https://www.taxydromiki.com/en/track/" +
-            encodeURIComponent(row.voucher),
+          numbers: row.labels || [row.voucher],
+          urls: (row.labels || [row.voucher]).map(n=>"https://www.taxydromiki.com/en/track/"+encodeURIComponent(n)),
         },
       },
     },
