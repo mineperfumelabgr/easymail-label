@@ -1,7 +1,9 @@
+import {PrintDocuments} from "../components/PrintDocuments";
+import {isCourierTestShop} from "../services/geniki.server";
 import { useFetcher, useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
-import { createAcsVoucher, extractAcsMultipartNumbers, extractAcsVoucherNo, getAcsMultipartVouchers, makeAcsLabelUrl } from "../services/acs.server";
+import { printAcsVoucher, extractPdfBytesFromAcsResponse, createAcsVoucher, extractAcsMultipartNumbers, extractAcsVoucherNo, getAcsMultipartVouchers, makeAcsLabelUrl } from "../services/acs.server";
 
 const ymd = () => new Date().toISOString().slice(0, 10);
 const str = (value) => String(value ?? "").trim();
@@ -15,6 +17,15 @@ export async function loader({ request }) {
 export async function action({ request }) {
   const { session } = await authenticate.admin(request);
   const form = await request.formData();
+  if(isCourierTestShop(session.shop))return Response.json({success:false,message:"ACS uses the live account. Manual ACS actions are disabled in the test store."});
+  if(form.get("op")==="print"){
+    try {
+      const shipment=await prisma.acsManualShipment.findFirstOrThrow({where:{shop:session.shop,id:str(form.get("id"))}});
+      const bytes=extractPdfBytesFromAcsResponse(await printAcsVoucher(shipment.voucherNo,{printType:1,startPosition:1}));
+      if(!bytes?.length)throw new Error("No printable label returned.");
+      return {pdf:Buffer.from(bytes).toString("base64"),documentName:"ACS voucher labels"};
+    } catch(error){return {success:false,message:error.message}}
+  }
   const recipientName = str(form.get("recipientName"));
   const phone = str(form.get("phone"));
   const address = str(form.get("address"));
@@ -84,7 +95,8 @@ export default function CustomAcsShipmentPage() {
   const result = fetcher.data;
   return <s-page heading="Custom ACS Shipment"><s-section>
     <p>Create an ACS shipment directly, without a Shopify order. These labels are stored here and do not change Shopify order status or tags.</p>
-    {result?.success ? <s-banner tone="success">Voucher {result.shipment.voucherNo} created. <a href={`/api/acs-label-pdf?number=${encodeURIComponent(result.shipment.voucherNo)}`} target="_blank" rel="noreferrer">Print label</a></s-banner> : null}
+    {result?.pdf && <PrintDocuments result={result}/>}
+    {result?.success ? <s-banner tone="success">Voucher {result.shipment.voucherNo} created. <fetcher.Form method="post"><input type="hidden" name="id" value={result.shipment.id}/><button name="op" value="print">Print labels</button></fetcher.Form></s-banner> : null}
     {result?.errors?.length ? <s-banner tone="critical">{result.errors.join(" ")}</s-banner> : null}
     <fetcher.Form method="post" className="custom-form">
       <label>Recipient name<input name="recipientName" required /></label><label>Phone<input name="phone" required inputMode="tel" /></label>
@@ -100,5 +112,5 @@ export default function CustomAcsShipmentPage() {
       <div className="form-actions"><s-button variant="primary" type="submit" disabled={busy}>{busy ? "Creating label…" : "Create ACS shipment"}</s-button></div>
     </fetcher.Form>
     <style>{`.custom-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin-top:20px}.custom-form label{display:grid;gap:6px;font-size:13px;font-weight:600;color:#303030}.custom-form input,.custom-form select{font:inherit;font-weight:400;padding:10px;border:1px solid #8c9196;border-radius:7px;background:#fff}.form-actions{grid-column:1/-1;margin-top:5px}`}</style>
-  </s-section><s-section heading="Recent custom shipments">{shipments.length ? <div style={{ overflowX: "auto" }}><table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}><thead><tr><th>Created</th><th>Recipient</th><th>Voucher</th><th>Packages</th><th>Pickup date</th><th>Labels</th></tr></thead><tbody>{shipments.map((shipment) => <tr key={shipment.id}><td>{new Date(shipment.createdAt).toLocaleString()}</td><td>{shipment.recipientName}<small style={{ display: "block" }}>{shipment.city}, {shipment.countryCode}</small></td><td><a href={`https://webapp.acscourier.net/track-shipment/${encodeURIComponent(shipment.voucherNo)}`} target="_blank" rel="noreferrer">{shipment.voucherNo}</a></td><td>{shipment.pieces}</td><td>{shipment.pickupDate}</td><td>{shipment.shipmentNumbers.map((number) => <a key={number} style={{ marginRight: 8 }} href={`/api/acs-label-pdf?number=${encodeURIComponent(number)}`} target="_blank" rel="noreferrer">Print {number}</a>)}</td></tr>)}</tbody></table></div> : <p>No custom shipments yet.</p>}</s-section></s-page>;
+  </s-section><s-section heading="Recent custom shipments">{shipments.length ? <div style={{ overflowX: "auto" }}><table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}><thead><tr><th>Created</th><th>Recipient</th><th>Voucher</th><th>Packages</th><th>Pickup date</th><th>Labels</th></tr></thead><tbody>{shipments.map((shipment) => <tr key={shipment.id}><td>{new Date(shipment.createdAt).toLocaleString()}</td><td>{shipment.recipientName}<small style={{ display: "block" }}>{shipment.city}, {shipment.countryCode}</small></td><td><a href={`https://webapp.acscourier.net/track-shipment/${encodeURIComponent(shipment.voucherNo)}`} target="_blank" rel="noreferrer">{shipment.voucherNo}</a></td><td>{shipment.pieces}</td><td>{shipment.pickupDate}</td><td><fetcher.Form method="post"><input type="hidden" name="id" value={shipment.id}/><button name="op" value="print">Print labels</button></fetcher.Form></td></tr>)}</tbody></table></div> : <p>No custom shipments yet.</p>}</s-section></s-page>;
 }
