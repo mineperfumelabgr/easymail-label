@@ -30,8 +30,6 @@ async function fetchRecentOrders(admin, maxPages = 5) {
               customer {
                 firstName
                 lastName
-                email
-
               }
               metafields(first: 30, namespace: "${NS}") {
                 edges {
@@ -102,7 +100,6 @@ export async function dailyAcsLabels(admin, selectedDate){
           totalAmount: safeStr(order?.currentTotalPriceSet?.shopMoney?.amount),
           customerName,
           addressPreview:[order.shippingAddress?.address1,order.shippingAddress?.address2,order.shippingAddress?.zip,order.shippingAddress?.city].filter(Boolean).join(', '),
-          email: safeStr(order?.customer?.email),
           city: safeStr(order?.shippingAddress?.city),
           zip: safeStr(order?.shippingAddress?.zip),
           country: safeStr(order?.shippingAddress?.countryCodeV2),
