@@ -111,3 +111,34 @@
 .operation-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
 .operation-grid a{color:#154f50}.operation-grid span{display:block;color:#50616a;font-size:.9em;font-weight:400;margin-top:4px}
 .courier th{color:#354f5c;background:#edf3f4}.courier tbody tr:hover{background:#f5fafa}
+
+.shipping-console{--accent:#3856ac;--tint:#edf1ff;background:#eef1f7;color:#202d46;border-radius:18px;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.shipping-console[data-view="daily"]{--accent:#7041a0;--tint:#f5edfd}
+.shipping-console[data-view="tracking"]{--accent:#006a94;--tint:#e5f4fa}
+.shipping-console[data-view="rules"]{--accent:#904e21;--tint:#fff2df}
+.shipping-console>header{background:linear-gradient(110deg,#172644,#2c395e 72%,#364777);border:0;padding:22px clamp(16px,3vw,34px);box-shadow:0 5px 18px #18274924}
+.shipping-console>header h1{font-weight:750;font-size:clamp(23px,3vw,33px);color:#fff;letter-spacing:-.045em}
+.shipping-console>header nav{gap:6px}.shipping-console>header nav a{color:#e2e8f8;display:inline-flex;align-items:center;gap:8px;border:1px solid transparent;font-weight:600}
+.shipping-console>header nav a:hover{background:#ffffff1c}.shipping-console>header nav a[aria-current="page"]{background:white;color:#23324a}
+.nav-marker{width:9px;height:9px;border-radius:3px;background:#93b2ff}.shipping-console header a:nth-child(2) .nav-marker{background:#c098e6}.shipping-console header a:nth-child(3) .nav-marker{background:#51b5d4}.shipping-console header a:nth-child(4) .nav-marker{background:#e8ab68}
+.shipping-console>section{border-color:#d3dbea;border-top:4px solid var(--accent);border-radius:12px}
+.shipping-console h2{font-size:24px;color:#1e2d49}
+.shipping-console .controls{padding:12px 0;gap:10px}
+.shipping-console .controls nav{gap:3px;border:1px solid #d5dcec;background:#f2f4fa;border-radius:10px;padding:3px}
+.shipping-console .controls nav a{color:#435371}.shipping-console .controls nav a[aria-current="page"]{background:white;color:#2d4385;box-shadow:0 1px 5px #28365326}
+.shipping-console button{background:var(--accent);border-color:var(--accent)}
+.shipping-console button[value="packing"],.shipping-console button[value="issue"]{background:var(--tint);color:var(--accent);border:1px solid #cad3e8}
+.shipping-console .scroll{border:1px solid #d7dfeb;border-radius:10px}
+.shipping-console th{background:#eaf0f8;color:#40516e;font-size:12px;font-weight:700;letter-spacing:.025em}
+.shipping-console td{vertical-align:middle;border-color:#e0e6ef;padding:11px 12px}
+.shipping-console tbody tr:nth-child(even){background:#fafbfe}.shipping-console tbody tr:has(input[name="selected"]:checked){background:#edf2ff}
+.shipping-console input[type="checkbox"]{accent-color:var(--accent)}
+.order-identity{display:flex;gap:9px;align-items:baseline;flex-wrap:wrap}.order-identity strong{font-variant-numeric:tabular-nums;color:#293f79}.order-identity span{font-weight:600;color:#29334a}
+.order-phone{display:block;color:#4e607e;font-size:13px;text-decoration:none;width:fit-content}.order-phone:hover{text-decoration:underline}
+.order-tags{display:flex;flex-wrap:wrap;gap:4px;max-width:320px;margin:5px 0}
+.order-tag,.fulfillment-chip,.country-chip{display:inline-flex;align-items:center;gap:6px;border-radius:6px;padding:2px 7px;font-size:12px;font-weight:600}
+.order-tag[data-tone="purple"]{background:#eee8fa;color:#59447b}.order-tag[data-tone="gold"]{background:#fff0bc;color:#73501b}.order-tag[data-tone="blue"]{background:#dfeeff;color:#245781}.order-tag[data-tone="red"]{background:#ffe1e4;color:#922d43}
+.fulfillment-chip{background:#f1f3f7;color:#495674;text-transform:capitalize}.fulfillment-chip[data-status="FULFILLED"]{background:#ddf3e8;color:#226244}
+.country-chip{padding:4px 8px;background:#edf0f6}.country-chip[data-code="GR"]{background:#e4efff;color:#254f8b}.country-chip[data-code="CY"]{background:#fff0d9;color:#855322}.country-chip[data-code="BG"]{background:#e1f3eb;color:#23654d}
+.shipping-console button[value^="cancel-row:"]{margin-top:7px;background:#fff2f3;color:#a1253b;border:1px solid #efc1c9;padding:3px 9px;min-height:28px;font-size:12px}
+.shipping-console footer a{border-bottom:3px solid #8294c9;color:#314779}.shipping-console footer a:nth-child(2){border-bottom-color:#b590d1}

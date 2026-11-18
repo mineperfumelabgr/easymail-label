@@ -89,11 +89,14 @@ export async function loader({ request }) {
     const limit=Number(p.get("limit"));
     let response;
     try {
-      response = await adminGraphql(
-      admin,
-      `query($after:String,$filter:String,$limit:Int!){orders(first:$limit,after:$after,sortKey:CREATED_AT,reverse:true,query:$filter){pageInfo{endCursor hasNextPage} nodes{id name acsVoucher:metafield(namespace:"acs",key:"voucher_number"){value} acsPieces:metafield(namespace:"acs",key:"pieces"){value} acsPickup:metafield(namespace:"acs",key:"pickup_date"){value} displayFulfillmentStatus test tags paymentGatewayNames totalOutstandingSet{shopMoney{amount currencyCode}} shippingAddress{name countryCodeV2} cancelledAt}}}`,
-      { after: p.get("after"), filter:scopes[scope], limit:[50,100,150,200].includes(limit)?limit:50 },
-    );
+      const query=`query($after:String,$filter:String,$limit:Int!){orders(first:$limit,after:$after,sortKey:CREATED_AT,reverse:true,query:$filter){pageInfo{endCursor hasNextPage} nodes{id name acsVoucher:metafield(namespace:"acs",key:"voucher_number"){value} acsPieces:metafield(namespace:"acs",key:"pieces"){value} acsPickup:metafield(namespace:"acs",key:"pickup_date"){value} displayFulfillmentStatus test tags paymentGatewayNames totalOutstandingSet{shopMoney{amount currencyCode}} shippingAddress{name countryCodeV2} cancelledAt}}}`;
+      const variables={after:p.get("after"),filter:scopes[scope],limit:[50,100,150,200].includes(limit)?limit:50};
+      try {
+        response=await adminGraphql(admin,query.replace("shippingAddress{name","shippingAddress{phone name"),variables);
+      } catch(error) {
+        if(!/phone|protected customer data|access denied/i.test(error.message))throw error;
+        response=await adminGraphql(admin,query,variables);
+      }
     } catch (error) {
       if (!/not approved to access the Order object|protected customer data/i.test(error.message)) throw error;
       return { view, rules, orders, rows, country, carrier, date, employees, next,
@@ -327,13 +330,23 @@ export async function action({ request }) {
   }
   if (intent === "issue" || intent==="both") {
     const employee=await db.employee.findFirst({where:{shop,id:String(f.get("employee")||"")},select:{name:true}});
-    if (!employee) return {messages:["Select the employee preparing these orders."]};
+    const {data:selection}=await adminGraphql(admin,`query($ids:[ID!]!){nodes(ids:$ids){... on Order{id name test displayFulfillmentStatus acs:metafield(namespace:"acs",key:"voucher_number"){value}}}}`,{ids});
+    const selected=new Map(selection.nodes.filter(Boolean).map(order=>[order.id,order]));
+    if (!employee && ids.some(id=>selected.get(id)?.displayFulfillmentStatus!=="FULFILLED")) return {messages:["Select the employee preparing new shipments."]};
     let packing=null;
     if(intent==="both"){try{packing=await packingPdf(admin,ids)}catch(error){return {messages:["Packing slips: "+error.message]}}}
     const issued=[];
     const issuedRows=[];
     for (const id of ids) {
       try {
+        const order=selected.get(id);
+        if(order?.displayFulfillmentStatus==="FULFILLED"){
+          const environment=order.test||isCourierTestShop(shop)?"test":"live";
+          let label=await db.courierShipment.findFirst({where:{shop,environment,OR:[{orderId:id},{sourceOrderId:id}],voucher:{not:null},status:{notIn:["Cancelled","Superseded"]}},orderBy:{createdAt:"desc"}});
+          if(order.acs?.value && (!label || label.carrier==="ACS"))label={carrier:"ACS",orderName:order.name,voucher:order.acs.value};
+          if(!label || (label.carrier==="ACS" && environment==="test")){messages.push(order.name+" · No printable label available in this environment.");continue}
+          issuedRows.push(label);messages.push(order.name+" · Reprint existing voucher "+label.voucher);continue;
+        }
         const carrier=f.get("carrier-"+id);
         const pieces=Number(f.get("pieces-"+id));
         const weight=Number(f.get("weight-"+id)||1);
@@ -444,6 +457,10 @@ function OrderCollection({order}) {
   </div>;
 }
 
+function CountryBadge({code}){
+  const flag={GR:"🇬🇷",CY:"🇨🇾",BG:"🇧🇬"}[code];
+  return <span className="country-chip" data-code={code}>{flag && <span aria-hidden="true">{flag}</span>}{countries[code]||code||"—"}</span>;
+}
 export default function Workspace() {
   const { view, rules, orders, rows, country, carrier, date, next, employees, accessNotice, pickupLists=[],pickupWarning,sandbox,dailyTotals } =
       useLoaderData(),
@@ -467,7 +484,7 @@ export default function Workspace() {
     </select>
   );
   return (
-    <main className="courier">
+    <main className="courier shipping-console" data-view={view}>
       <header>
         <h1>Courier Label</h1>
         <nav>
@@ -477,7 +494,7 @@ export default function Workspace() {
               key={v}
               to={href({ view: v, after: null, country: null, carrier: null })}
             >
-              {l}
+              <span aria-hidden="true" className="nav-marker"/>{l}
             </Link>
           ))}
         </nav>
@@ -606,23 +623,20 @@ export default function Workspace() {
                               name="selected"
                               value={r.id}
                               aria-label={"Select " + (r.name || r.orderName)}
-                              disabled={(view==="orders" && (r.displayFulfillmentStatus==="FULFILLED" || !r.shippingAddress || r.cancelledAt || r.displayFulfillmentStatus==="ON_HOLD")) || view==="tracking" && (r.status==="Cancelled" || (sandbox && r.carrier==="ACS"))}
+                              disabled={(view==="orders" && ((!r.shippingAddress && r.displayFulfillmentStatus!=="FULFILLED") || r.cancelledAt || r.displayFulfillmentStatus==="ON_HOLD")) || view==="tracking" && (r.status==="Cancelled" || (sandbox && r.carrier==="ACS"))}
                             />
                           </td>
                           <td>
-                            {r.name || r.orderName}<input type="hidden" name={"name-"+r.id} value={r.name||r.orderName}/>
-                            {view==="orders" && <div><small>{r.displayFulfillmentStatus?.toLowerCase().replaceAll("_"," ")}</small>{r.tags.map(tag=><span key={tag} style={{display:"inline-block",margin:"2px 3px",padding:"1px 6px",border:"1px solid #ccc",borderRadius:8}}>{tag}</span>)}</div>}
-                            <div className="recipient">{view==="orders"?r.shippingAddress?.name:r.recipientName}</div>{view!=="orders" && <small>{r.addressPreview || "—"}</small>}
+                            <div className="order-identity"><strong>{r.name || r.orderName}</strong><span>{r.shippingAddress?.name||r.recipientName}</span></div>
+                            <input type="hidden" name={"name-"+r.id} value={r.name||r.orderName}/>
+                            {r.shippingAddress?.phone && <a className="order-phone" href={"tel:"+r.shippingAddress.phone.replace(/[^+0-9]/g,"")}>{r.shippingAddress.phone}</a>}
+                            {view==="orders" && <div className="order-tags"><span className="fulfillment-chip" data-status={r.displayFulfillmentStatus}>{r.displayFulfillmentStatus?.toLowerCase().replaceAll("_"," ")}</span>{r.tags.map(tag=><span key={tag} className="order-tag" data-tone={/error|return/i.test(tag)?"red":/cod/i.test(tag)?"gold":/pre.?order/i.test(tag)?"blue":"purple"}>{tag}</span>)}</div>}
+                            {view!=="orders" && <small>{r.addressPreview || "—"}</small>}
                             {r.label && <Link to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.label.id})}> · Existing voucher {r.label.voucher}</Link>}
                             {(r.test || r.environment === "test") && " · Test"}
                           </td>
                           <td>
-                            {countries[
-                              r.country || r.shippingAddress?.countryCodeV2
-                            ] ||
-                              r.country ||
-                              r.shippingAddress?.countryCodeV2 ||
-                              "—"}
+                            <CountryBadge code={r.country || r.shippingAddress?.countryCodeV2}/>
                           </td>
                           <td>
                             {view === "orders" && r.displayFulfillmentStatus==="FULFILLED" ? (r.shipment?.carrier || (r.acsVoucher?.value?"ACS":"—")) : view === "orders" ? (
@@ -670,8 +684,8 @@ export default function Workspace() {
                             </div></td>:<td>{r.preparedBy||"—"} · {r.pieces||r.labels?.length||"—"}</td>}
                           {view !== "orders" && (
                             <>
-                              <td>{r.carrier==="Geniki" && r.voucher?<Link to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.id})}>{r.voucher}</Link>:r.voucher||"—"}</td>
-                              <td><span className="shipment-state" data-tone={/cancel|fail|return|problem/i.test(r.status)?"warning":/deliver(ed)?$|closed|complete/i.test(r.status)?"success":"info"}>{r.status}</span>{view==="daily" && r.voucher && r.status!=="Cancelled" && <div><button type="submit" name="intent" value={"cancel-row:"+r.id} disabled={sandbox&&r.carrier==="ACS"} onClick={e=>{if(!window.confirm("Cancel "+r.carrier+" voucher "+r.voucher+" for "+r.orderName+"? Review its Shopify fulfillment separately."))e.preventDefault()}}>Cancel voucher</button></div>}</td>
+                              <td>{r.carrier==="Geniki" && r.voucher?<Link to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.id})}>{r.voucher}</Link>:r.voucher||"—"}{view==="daily" && r.voucher && r.status!=="Cancelled" && <div><button type="submit" name="intent" value={"cancel-row:"+r.id} disabled={sandbox&&r.carrier==="ACS"} onClick={e=>{if(!window.confirm("Cancel "+r.carrier+" voucher "+r.voucher+" for "+r.orderName+"? Review its Shopify fulfillment separately."))e.preventDefault()}}>Cancel voucher</button></div>}</td>
+                              <td><span className="shipment-state" data-tone={/cancel|fail|return|problem/i.test(r.status)?"warning":/deliver(ed)?$|closed|complete/i.test(r.status)?"success":"info"}>{r.status}</span></td>
                             </>
                           )}
                         </tr>
