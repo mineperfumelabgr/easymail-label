@@ -3,11 +3,8 @@ import { authenticate } from "../shopify.server";
 import {
   extractPickupLists,
   getAcsPickupLists,
-  makeAcsLabelUrl,
   makeAcsPickupListPdfUrl,
 } from "../services/acs.server";
-
-const NS = "acs";
 
 function safeStr(v) {
   return String(v ?? "");
@@ -57,16 +54,6 @@ function jsonFAIL(message, status = 200, extra = {}) {
     status,
     headers: { "Content-Type": "application/json; charset=utf-8" },
   });
-}
-
-async function adminGraphql(admin, query, variables) {
-  const r = await admin.graphql(query, { variables });
-  const j = await r.json();
-  if (j?.errors?.length) {
-    const msg = j.errors.map((e) => e.message).join(" | ");
-    throw new Error(`Shopify GraphQL error: ${msg}`);
-  }
-  return j;
 }
 
 export async function loader({ request }) {
