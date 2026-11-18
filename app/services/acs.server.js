@@ -72,7 +72,9 @@ export async function acsCall(alias, ACSInputParameters = {}) {
   }
 
   if (data?.ACSExecution_HasError) {
-    throw new Error(data?.ACSExecutionErrorMessage || `ACS ${alias} failed.`);
+    const error=new Error(data?.ACSExecutionErrorMessage || `ACS ${alias} failed.`);
+    error.voucherRejected=alias==="ACS_Create_Voucher" && !extractAcsVoucherNo(data);
+    throw error;
   }
 
   return data;

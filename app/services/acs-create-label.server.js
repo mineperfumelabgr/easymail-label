@@ -427,7 +427,10 @@ console.dir(createResp, { depth: 10 });
 const masterVoucherNumber = extractAcsVoucherNo(createResp);
 
 if (!masterVoucherNumber) {
-  throw new Error(`ACS did not return Voucher_No. Response: ${JSON.stringify(createResp).slice(0, 1000)}`);
+  const rejected=createResp?.ACSOutputResponce?.ACSValueOutput?.[0]?.Error_Message || createResp?.ACSOutputResponse?.ACSValueOutput?.[0]?.Error_Message;
+  const error=new Error(rejected || "ACS did not confirm a voucher number. Check the request before retrying.");
+  error.voucherRejected=Boolean(rejected);
+  throw error;
 }
 
   let childNumbers = [];

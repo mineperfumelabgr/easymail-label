@@ -117,7 +117,7 @@ export async function issue(admin, shop, orderId, carrier, weight, options = {})
       pieces: options.pieces || 1,
       codOverride: codAmount > 0,
       codAmountOverride: codAmount || null,
-    }).catch(async error=>{if(fresh && !submitted)await db.courierShipment.deleteMany({where:{id:row.id,voucher:null}});throw error});
+    }).catch(async error=>{if(fresh && (!submitted || error.voucherRejected))await db.courierShipment.deleteMany({where:{id:row.id,voucher:null}});throw error});
     return db.courierShipment.update({
       where: { id: row.id },
       data: {
