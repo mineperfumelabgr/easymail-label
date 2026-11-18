@@ -6,7 +6,7 @@ import { orderCod } from "../services/order-cod";
 import {DailyHandover} from "../components/DailyHandover";
 import {packingPdf, renderPdf} from "../services/packing-slips.server";
 import {PrintDocuments} from "../components/PrintDocuments";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Form,
   Link,
@@ -283,7 +283,7 @@ export async function action({ request }) {
     const id=intent.slice(11), previous=String(f.get("previous-"+id)||"");
     try {
       const employee=await db.employee.findFirst({where:{shop,id:String(f.get("employee")||"")}});
-      if(!employee)throw new Error("Select the employee preparing this shipment.");
+      if(!employee)return {fieldErrors:{employee:"Select the employee in Prepared by before issuing a replacement voucher."},messages:[]};
       const {data}=await adminGraphql(admin,`query($id:ID!){order(id:$id){test cancelledAt displayFulfillmentStatus}}`,{id});
       if(!previous || !data.order || data.order.test || data.order.cancelledAt || data.order.displayFulfillmentStatus!=="FULFILLED")throw new Error("Reload this order before replacement.");
       const pieces=Number(f.get("replacementPieces-"+id)),raw=String(f.get("replacementCod-"+id)||"").trim(), amount=Number(raw);
@@ -332,7 +332,7 @@ export async function action({ request }) {
     const employee=await db.employee.findFirst({where:{shop,id:String(f.get("employee")||"")},select:{name:true}});
     const {data:selection}=await adminGraphql(admin,`query($ids:[ID!]!){nodes(ids:$ids){... on Order{id name test displayFulfillmentStatus acs:metafield(namespace:"acs",key:"voucher_number"){value}}}}`,{ids});
     const selected=new Map(selection.nodes.filter(Boolean).map(order=>[order.id,order]));
-    if (!employee && ids.some(id=>selected.get(id)?.displayFulfillmentStatus!=="FULFILLED")) return {messages:["Select the employee preparing new shipments."]};
+    if (!employee && ids.some(id=>selected.get(id)?.displayFulfillmentStatus!=="FULFILLED")) return {fieldErrors:{employee:"Select the employee in Prepared by before preparing new shipments."},messages:[]};
     let packing=null;
     if(intent==="both"){try{packing=await packingPdf(admin,ids)}catch(error){return {messages:["Packing slips: "+error.message]}}}
     const issued=[];
@@ -468,6 +468,28 @@ export default function Workspace() {
     busy = useNavigation().state !== "idle";
   const [p] = useSearchParams(),
     [choices, setChoices] = useState({});
+  const [employeeWarning,setEmployeeWarning]=useState("");
+  const employeeAlert=useRef(null);
+  useEffect(()=>{
+    setEmployeeWarning(result?.fieldErrors?.employee || "");
+  },[result]);
+  useEffect(()=>{
+    if(employeeWarning){
+      employeeAlert.current?.scrollIntoView({block:"center",behavior:"smooth"});
+      employeeAlert.current?.focus({preventScroll:true});
+    }
+  },[employeeWarning]);
+  function validatePreparation(event){
+    const form=event.currentTarget;
+    const intent=event.nativeEvent.submitter?.value;
+    const selected=[...form.querySelectorAll('input[name="selected"]:checked')];
+    const needsEmployee=intent?.startsWith("replaceAcs:") ||
+      (["both","issue"].includes(intent) && selected.some(input=>input.dataset.fulfilled!=="true"));
+    if(needsEmployee && !form.elements.namedItem("employee")?.value){
+      event.preventDefault();
+      setEmployeeWarning("Select the employee in Prepared by before preparing new shipments.");
+    }
+  }
   const href = (change) => {
     const params = new URLSearchParams(p);
     for (const [k, v] of Object.entries(change))
@@ -546,7 +568,8 @@ export default function Workspace() {
         {view==="orders" && <Form method="get" key={"order-filter"+p.toString()} className="controls">{[...p].filter(([k])=>!["scope","limit","q","after"].includes(k)).map(([k,v])=><input type="hidden" key={k} name={k} value={v}/>)}<input type="hidden" name="scope" value={p.get("scope")||"unfulfilled"}/><nav aria-label="Fulfillment status">{[["all","All"],["unfulfilled","Unfulfilled"],["fulfilled","Fulfilled"],["on_hold","On Hold"]].map(([value,label])=><Link key={value} aria-current={(p.get("scope")||"unfulfilled")===value?"page":undefined} to={href({scope:value,after:null})}>{label}</Link>)}</nav><label>Orders per page <select name="limit" defaultValue={p.get("limit")||"50"}>{[50,100,150,200].map(n=><option key={n}>{n}</option>)}</select></label><label>Search these orders <input name="q" defaultValue={p.get("q")||""} placeholder="Recipient or order number"/></label><button>Apply</button></Form>}
         {view==="daily" && <DailyHandover key={date+carrier} {...{date,carrier,sandbox,dailyTotals,pickupLists,pickupWarning}}/>}
         {view==="orders" && <details open={!employees.length || undefined}><summary>Add an employee</summary><Form method="post"><label>Employee name <input name="name" required maxLength={100}/></label><button name="intent" value="addEmployee">Add employee</button></Form></details>}
-        <Form method="post" key={view + p.toString()}>
+        {result && <PrintDocuments result={result}/>}
+        <Form method="post" key={view + p.toString()} onSubmit={validatePreparation}>
           <fieldset disabled={busy}><input type="hidden" name="dailyDate" value={date}/>
             {view === "rules" ? (
               <>
@@ -572,7 +595,8 @@ export default function Workspace() {
                 <div className="controls">
                   {view === "orders" ? (
                     <>
-                      <label>Prepared by <select name="employee" defaultValue=""><option value="">Select employee</option>{employees.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></label>
+                      {employeeWarning && <div className="preparation-warning" role="alert" tabIndex={-1} ref={employeeAlert}><strong>Choose an employee to continue</strong><span>{employeeWarning}</span></div>}
+                      <label>Prepared by <select name="employee" defaultValue="" aria-invalid={Boolean(employeeWarning)} onChange={()=>setEmployeeWarning("")}><option value="">Select employee</option>{employees.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></label>
                       <Link to={"/app/employees?"+p}>Manage employees</Link>
                       <button name="intent" value="both">Prepare packing slips + vouchers</button><button name="intent" value="packing" formNoValidate>Print packing slips only</button><button name="intent" value="issue">Prepare vouchers only</button>
                     </>
@@ -621,6 +645,7 @@ export default function Workspace() {
                             <input
                               type="checkbox"
                               name="selected"
+                              data-fulfilled={r.displayFulfillmentStatus==="FULFILLED"}
                               value={r.id}
                               aria-label={"Select " + (r.name || r.orderName)}
                               disabled={(view==="orders" && ((!r.shippingAddress && r.displayFulfillmentStatus!=="FULFILLED") || r.cancelledAt || r.displayFulfillmentStatus==="ON_HOLD")) || view==="tracking" && (r.status==="Cancelled" || (sandbox && r.carrier==="ACS"))}
@@ -710,7 +735,6 @@ export default function Workspace() {
             ))}
           </div>
         )}
-        {result && <PrintDocuments result={result}/>}
       </section>
       <footer>
         <Link to={"/app/acs-operations?"+p}>ACS Operations</Link>

@@ -142,3 +142,9 @@
 .country-chip{padding:4px 8px;background:#edf0f6}.country-chip[data-code="GR"]{background:#e4efff;color:#254f8b}.country-chip[data-code="CY"]{background:#fff0d9;color:#855322}.country-chip[data-code="BG"]{background:#e1f3eb;color:#23654d}
 .shipping-console button[value^="cancel-row:"]{margin-top:7px;background:#fff2f3;color:#a1253b;border:1px solid #efc1c9;padding:3px 9px;min-height:28px;font-size:12px}
 .shipping-console footer a{border-bottom:3px solid #8294c9;color:#314779}.shipping-console footer a:nth-child(2){border-bottom-color:#b590d1}
+
+.courier .preparation-warning{flex-basis:100%;background:#fff1df;border:2px solid #c27921;border-radius:10px;padding:13px 16px;color:#743e0c;font-size:15px;box-shadow:0 2px 8px #8b541515}
+.courier .preparation-warning strong,.courier .preparation-warning span{display:block}
+.courier .preparation-warning strong{font-size:17px;margin-bottom:3px}
+.courier select[aria-invalid="true"]{border:2px solid #c27921;background:#fff8ed}
+.courier .print-documents{scroll-margin-top:20px}
