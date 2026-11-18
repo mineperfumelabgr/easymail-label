@@ -89,7 +89,7 @@ export async function loader({ request }) {
     const limit=Number(p.get("limit"));
     let response;
     try {
-      const query=`query($after:String,$filter:String,$limit:Int!){orders(first:$limit,after:$after,sortKey:CREATED_AT,reverse:true,query:$filter){pageInfo{endCursor hasNextPage} nodes{id name acsVoucher:metafield(namespace:"acs",key:"voucher_number"){value} acsPieces:metafield(namespace:"acs",key:"pieces"){value} acsPickup:metafield(namespace:"acs",key:"pickup_date"){value} displayFulfillmentStatus test tags paymentGatewayNames totalOutstandingSet{shopMoney{amount currencyCode}} currentTotalPriceSet{shopMoney{amount currencyCode}} shippingAddress{name countryCodeV2} cancelledAt}}}`;
+      const query=`query($after:String,$filter:String,$limit:Int!){orders(first:$limit,after:$after,sortKey:CREATED_AT,reverse:true,query:$filter){pageInfo{endCursor hasNextPage} nodes{id name acsVoucher:metafield(namespace:"acs",key:"voucher_number"){value} acsPieces:metafield(namespace:"acs",key:"pieces"){value} acsPickup:metafield(namespace:"acs",key:"pickup_date"){value} displayFulfillmentStatus test tags paymentGatewayNames totalOutstandingSet{shopMoney{amount currencyCode}} shippingAddress{name countryCodeV2} cancelledAt}}}`;
       const variables={after:p.get("after"),filter:scopes[scope],limit:[50,100,150,200].includes(limit)?limit:50};
       try {
         response=await adminGraphql(admin,query.replace("shippingAddress{name","shippingAddress{phone name"),variables);

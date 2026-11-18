@@ -4,17 +4,14 @@ export function orderCod(order) {
   const tagged = Boolean(order.tags?.some(tag => tag.trim().toUpperCase() === "COD"));
   const gateway = Boolean(order.paymentGatewayNames?.some(name => /cash on delivery|αντικαταβολ|\bCOD\b/i.test(name)));
   const domestic = order.shippingAddress?.countryCodeV2 === "GR";
-  // An explicit COD tag is also used on test orders recorded as paid in Shopify.
-  const useOrderTotal = tagged && !(outstanding > 0);
-  const money = useOrderTotal ? order.currentTotalPriceSet?.shopMoney : outstandingMoney;
-  const amount = Number(money?.amount);
+  const amount = outstanding;
   return {
     domestic,
     identified: tagged || gateway,
-    enabled: Boolean(domestic && (tagged || (gateway && outstanding > 0))),
+    enabled: Boolean(domestic && (tagged || gateway) && outstanding > 0),
     amount,
-    currency: money?.currencyCode || outstandingMoney?.currencyCode,
-    source: useOrderTotal ? "order total" : "outstanding balance",
+    currency: outstandingMoney?.currencyCode,
+    source: "outstanding balance",
   };
 }
 
