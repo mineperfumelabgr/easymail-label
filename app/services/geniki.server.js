@@ -25,7 +25,7 @@ function client(endpoint, prefix) {
     });
     if (!response.ok)
       throw new Error("Geniki " + method + " HTTP " + response.status);
-    if (method === "GetVouchersPdf") {
+    if (method === "GetVouchersPdf" || method === "GetReturnRequestPdf") {
       const pdf = Buffer.from(await response.arrayBuffer());
       if (pdf.subarray(0, 5).toString() !== "%PDF-")
         throw new Error("Geniki did not return a PDF");
@@ -35,8 +35,11 @@ function client(endpoint, prefix) {
     const result =
       envelope.Envelope?.Body?.[method + "Response"]?.[method + "Result"];
     const code = typeof result === "object" ? result?.Result : result;
-    if (code !== "0")
-      throw new Error("Geniki " + method + " result " + (code ?? "missing"));
+    if (code !== "0") {
+      const error = new Error("Geniki " + method + " result " + (code ?? "missing"));
+      error.genikiCode = code;
+      throw error;
+    }
     return result;
   }
 
@@ -64,6 +67,11 @@ function client(endpoint, prefix) {
 
   return {
     authenticate: authenticateGeniki,
+    createOrderReturn: (key, voucher, days) => call("CreateVoucherReturnRequest", {
+      sAuthKey:key, sVoucherNumber:voucher, nDaysValid:days, sRecipientId:"", bPayedBySender:false,
+    }),
+    findOrderReturn: (key, voucher) => call("GetReturnRequestOfVoucher", {sAuthKey:key,sVoucherNumber:voucher}),
+    returnPdf: (key, serial) => call("GetReturnRequestPdf",{authKey:key,returnSerial:serial}),
     tracking: (key, voucher) =>
       call("TrackDeliveryStatus", {
         authKey: key,

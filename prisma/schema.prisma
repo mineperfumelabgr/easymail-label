@@ -149,6 +149,8 @@ model CourierShipment {
   labels Json?
   checkedAt DateTime?
   sourceOrderId String?
+  returnPending Boolean @default(false)
+  returnSerial String?
   previousId String? @unique
   fulfillmentPlan Json?
   status String @default("Creating")

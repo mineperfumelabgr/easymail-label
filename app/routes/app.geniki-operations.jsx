@@ -72,6 +72,66 @@ export async function action({ request }) {
           "Shopify fulfillment and tracking confirmed for " + updated.voucher,
       };
     }
+    if (op === "order-return") {
+      const row = await db.courierShipment.findFirstOrThrow({
+        where: { id: String(f.get("id")), shop, carrier: "Geniki" },
+      });
+      if (
+        !row.voucher ||
+        !(row.sourceOrderId || row.orderId).startsWith(
+          "gid://shopify/Order/",
+        ) ||
+        ["Cancelled", "Superseded"].includes(row.status)
+      )
+        throw new Error("Select an active Geniki order shipment.");
+      const api = row.environment === "test" ? genikiSandbox : genikiLive;
+      const key = await api.authenticate();
+      let serial = row.returnSerial;
+      if (!serial) {
+        if (f.get("requested") !== "on")
+          throw new Error("Confirm the customer's return request.");
+        const days = Number(f.get("days"));
+        if (!Number.isInteger(days) || days < 1 || days > 365)
+          throw new Error("Choose a coupon validity between 1 and 365 days.");
+        const claim = await db.courierShipment.updateMany({
+          where: { id: row.id, shop, returnSerial: null, returnPending: false },
+          data: { returnPending: true },
+        });
+        let response;
+        try {
+          response = claim.count
+            ? await api.createOrderReturn(key, row.voucher, days)
+            : await api.findOrderReturn(key, row.voucher);
+        } catch (error) {
+          if (
+            claim.count &&
+            error.genikiCode &&
+            /^-?\d+$/.test(error.genikiCode)
+          ) {
+            await db.courierShipment.updateMany({
+              where: { id: row.id, returnSerial: null },
+              data: { returnPending: false },
+            });
+          }
+          throw error;
+        }
+        serial = response.ReturnSerial;
+        if (!serial)
+          throw new Error(
+            "Geniki has not confirmed the return coupon. Check again before issuing another.",
+          );
+        await db.courierShipment.update({
+          where: { id: row.id },
+          data: { returnSerial: serial, returnPending: false },
+        });
+      }
+      const pdf = await api.returnPdf(key, serial);
+      return {
+        message: "Return coupon " + serial + " ready to download.",
+        pdf: pdf.toString("base64"),
+        number: "return-" + serial,
+      };
+    }
     if (op === "print") {
       const row = await db.courierShipment.findFirstOrThrow({
         where: { id: String(f.get("id")), shop, carrier: "Geniki" },
@@ -147,6 +207,46 @@ export default function Operations() {
               Reprint existing label
             </button>
           </Form>
+          {row.voucher &&
+            (row.sourceOrderId || row.orderId).startsWith(
+              "gid://shopify/Order/",
+            ) &&
+            !["Cancelled", "Superseded"].includes(row.status) && (
+              <details>
+                <summary>Customer return</summary>
+                <Form method="post">
+                  <input type="hidden" name="id" value={row.id} />
+                  {row.returnSerial ? (
+                    <p>Return coupon {row.returnSerial}</p>
+                  ) : (
+                    <>
+                      <label>
+                        Coupon validity (days){" "}
+                        <input
+                          type="number"
+                          name="days"
+                          min="1"
+                          max="365"
+                          defaultValue="30"
+                          required
+                        />
+                      </label>
+                      <label>
+                        <input type="checkbox" name="requested" required />{" "}
+                        Customer requested this return
+                      </label>
+                    </>
+                  )}
+                  <button disabled={busy} name="op" value="order-return">
+                    {row.returnSerial
+                      ? "Download return PDF"
+                      : row.returnPending
+                        ? "Retrieve return coupon"
+                        : "Generate return PDF"}
+                  </button>
+                </Form>
+              </details>
+            )}
           {!row.fulfillmentId &&
             row.voucher &&
             row.orderId.startsWith("gid://shopify/Order/") && (
