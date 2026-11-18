@@ -147,11 +147,11 @@ async function createShopifyEvent(admin, fulfillmentId, status, happenedAt, mess
   return payload.fulfillmentEvent;
 }
 
-export async function runAcsTrackingSync(admin, shop) {
+export async function runAcsTrackingSync(admin, shop, selectedOrderIds = null) {
     const orders = [];
     let after = null;
     // Limit each run to the latest 250 orders to keep API calls bounded.
-    for (let page = 0; page < 5; page++) {
+    for (let page = 0; !selectedOrderIds && page < 5; page++) {
       const data = await graph(admin, ORDER_QUERY, { after });
       const connection = data.orders;
       orders.push(...connection.edges.map((edge) => edge.node));
@@ -162,7 +162,7 @@ export async function runAcsTrackingSync(admin, shop) {
     // Recent-order discovery is capped at 250 rows per run. Also reload every
     // previously tracked, non-delivered order by ID so an old open shipment is
     // not abandoned just because newer orders pushed it past that window.
-    const knownOpenOrderRows = await prisma.acsTrackingSnapshot.findMany({
+    const knownOpenOrderRows = selectedOrderIds ? selectedOrderIds.map(orderId => ({orderId})) : await prisma.acsTrackingSnapshot.findMany({
       where: { shop, orderId: { not: null }, status: { notIn: ["DELIVERED", "RETURNED", "ACS_REVIEW_REQUIRED"] } },
       select: { orderId: true },
       distinct: ["orderId"],

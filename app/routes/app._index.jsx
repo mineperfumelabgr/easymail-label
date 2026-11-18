@@ -1,3 +1,7 @@
+import {dailyAcsLabels} from "../services/acs-daily.server";
+import {cancelAcsLabel} from "../services/acs-cancellation.server";
+import {runAcsTrackingSync} from "../services/acs-tracking-sync.server";
+import {getAcsPickupLists, extractPickupLists, issueAcsPickupList, extractIssuePickupListResult, makeAcsPickupListPdfUrl} from "../services/acs.server";
 import { orderCod } from "../services/order-cod";
 import { useState } from "react";
 import {
@@ -42,6 +46,21 @@ const athensDay = (date) =>
 const genikiFor = (row) =>
   row.environment === "test" ? genikiSandbox : genikiLive;
 
+async function legacyDaily(admin,shop,date){
+ const labels=await dailyAcsLabels(admin,date);
+ const manual=await db.acsManualShipment.findMany({where:{shop,pickupDate:date}});
+ return [...labels.map(r=>({id:"legacy:"+r.orderId+":"+r.voucherNumber,orderId:r.orderId,orderName:r.orderName,carrier:"ACS",voucher:r.voucherNumber,pieces:r.pieces,labels:r.shipmentNumbers,recipientName:r.customerName,addressPreview:r.addressPreview,country:r.country,status:"Issued",createdAt:r.createdAt})),
+ ...manual.map(r=>({id:"manual:"+r.id,manualId:r.id,orderName:r.reference||"Manual shipment",carrier:"ACS",voucher:r.voucherNo,labels:JSON.parse(r.shipmentNumbers),recipientName:r.recipientName,addressPreview:[r.address,r.zip,r.city].filter(Boolean).join(", "),country:r.countryCode,status:"Issued",createdAt:r.createdAt}))];
+}
+async function addAddresses(admin, rows){
+ const ids=[...new Set(rows.filter(r=>!r.recipientName||!r.addressPreview).map(r=>r.sourceOrderId||r.orderId).filter(id=>id?.startsWith("gid://shopify/Order/")))];
+ for(let i=0;i<ids.length;i+=100){
+ const {data}=await adminGraphql(admin,`query($ids:[ID!]!){nodes(ids:$ids){... on Order{id shippingAddress{name address1 address2 zip city countryCodeV2}}}}`,{ids:ids.slice(i,i+100)});
+ const byId=new Map(data.nodes.filter(Boolean).map(o=>[o.id,o.shippingAddress]));
+ for(const r of rows){const a=byId.get(r.sourceOrderId||r.orderId);if(a){r.recipientName ||= a.name;r.addressPreview ||= [a.address1,a.address2,a.zip,a.city].filter(Boolean).join(", ");r.country ||= a.countryCodeV2;}}
+ }
+}
+
 export async function loader({ request }) {
   const {
     admin,
@@ -56,6 +75,8 @@ export async function loader({ request }) {
   let orders = [],
     rows = [];
   const employees = view === "orders" ? await db.employee.findMany({where:{shop},select:{id:true,name:true},orderBy:{name:"asc"}}) : [];
+  let pickupLists=[],pickupWarning="";
+  const sandbox=isCourierTestShop(shop);
   let next = null;
   if (view === "orders") {
     let response;
@@ -109,30 +130,19 @@ export async function loader({ request }) {
         orderBy: { lastCheckedAt: "desc" },
         take: 250,
       });
-      const ids = [...new Set(snapshots.map((r) => r.orderId).filter(Boolean))];
-      const addressById = new Map();
-      if (ids.length) {
-        const { data } = await adminGraphql(
-          admin,
-          `query($ids:[ID!]!){nodes(ids:$ids){... on Order{id shippingAddress{countryCodeV2}}}}`,
-          { ids },
-        );
-        for (const o of data.nodes.filter(Boolean))
-          addressById.set(o.id, o.shippingAddress?.countryCodeV2);
-      }
       const byVoucher = new Map(
         rows.filter((r) => r.carrier === "ACS").map((r) => [r.voucher, r]),
       );
       for (const s of snapshots) {
         const existing = byVoucher.get(s.voucherNo);
         if (existing) {
-          existing.status = s.statusLabel;
+          if(existing.status!=="Cancelled")existing.status = s.statusLabel;
           continue;
         }
-        const dest = addressById.get(s.orderId) || "";
-        if (!country || dest === country)
-          rows.push({
-            id: s.id,
+        const dest = "";
+        rows.push({
+            id: "snapshot:"+s.id,
+            orderId:s.orderId,recipientName:s.recipientName,
             orderName: s.orderName,
             country: dest,
             carrier: "ACS",
@@ -143,8 +153,16 @@ export async function loader({ request }) {
       }
       rows.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     }
+    if(view==="daily" && carrier!=="Geniki"){
+      const seen=new Set(rows.filter(r=>r.carrier==="ACS").map(r=>r.voucher));
+      const legacy=await legacyDaily(admin,shop,date);
+      rows.push(...legacy.filter(r=>!seen.has(r.voucher)));
+      if(!sandbox)try{pickupLists=extractPickupLists(await getAcsPickupLists(date)).map(l=>({...l,url:makeAcsPickupListPdfUrl(l.pickupListNo,date)}))}catch(e){pickupWarning=e.message}
+    }
+    await addAddresses(admin,rows);
+    if(country) rows=rows.filter(r=>r.country===country);
   }
-  return { view, rules, orders, rows, country, carrier, date, employees, next };
+  return { view, rules, orders, rows, country, carrier, date, employees, next, pickupLists,pickupWarning,sandbox };
 }
 
 export async function action({ request }) {
@@ -210,7 +228,14 @@ export async function action({ request }) {
       return { messages: [e.message] };
     }
   }
-  const ids = [...new Set(f.getAll("selected"))];
+  const rowCancel=typeof intent==="string" && intent.startsWith("cancel-row:");
+  const ids = rowCancel?[intent.slice(11)]:[...new Set(f.getAll("selected"))];
+  const dailyDate=String(f.get("dailyDate")||"");
+  if(intent==="acsPickup"){
+    if(isCourierTestShop(shop))return {messages:["ACS pickup lists are disabled in the test store."]};
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(dailyDate))return {messages:["Invalid pickup date."]};
+    try{const r=extractIssuePickupListResult(await issueAcsPickupList(dailyDate));return {messages:[r.pickupListNo?"ACS pickup list "+r.pickupListNo:r.errorMessage||"ACS did not issue a list.",...(r.unprintedVouchers||[])]}}catch(e){return {messages:[e.message]}}
+  }
   if (!ids.length || ids.length > 50)
     return { messages: ["Select 1–50 rows."] };
   const messages = [];
@@ -249,6 +274,13 @@ export async function action({ request }) {
   const rows = await db.courierShipment.findMany({
     where: { shop, id: { in: ids } },
   });
+  if(ids.some(id=>id.startsWith("legacy:")||id.startsWith("manual:")) && /^\d{4}-\d{2}-\d{2}$/.test(dailyDate)){
+    const legacy=await legacyDaily(admin,shop,dailyDate);rows.push(...legacy.filter(r=>ids.includes(r.id)));
+  }
+  if(intent==="refresh" && ids.some(id=>id.startsWith("snapshot:"))){
+    const snapshots=await db.acsTrackingSnapshot.findMany({where:{shop,id:{in:ids.filter(id=>id.startsWith("snapshot:")).map(id=>id.slice(9))}}});
+    rows.push(...snapshots.map(r=>({carrier:"ACS",orderId:r.orderId,orderName:r.orderName,voucher:r.voucherNo})));
+  }
   if (rows.length !== ids.length)
     return { messages: ["Selection expired. Reload the page."] };
   const keys = new Map();
@@ -288,12 +320,28 @@ export async function action({ request }) {
   }
   for (const row of rows) {
     try {
+      if(row.carrier==="ACS"){
+        if(isCourierTestShop(shop))throw new Error("ACS operations are disabled in the test store.");
+        if(rowCancel){
+          if(row.status==="Cancelled")throw new Error("Voucher already cancelled");
+          const message=await cancelAcsLabel(admin,row.voucher,row.orderId);
+          if(row.manualId)await db.acsManualShipment.deleteMany({where:{shop,id:row.manualId}});
+          else if(!row.id.startsWith("legacy:"))await db.courierShipment.updateMany({where:{shop,id:row.id},data:{status:"Cancelled"}});
+          messages.push(row.orderName+" · "+message);
+        }else if(intent==="refresh" && row.orderId){
+          if(row.status==="Cancelled")throw new Error("Voucher cancelled");
+          const sync=await runAcsTrackingSync(admin,shop,[row.orderId]);
+          if(sync.errors.length)throw new Error(sync.errors.map(e=>e.message).join(", "));
+          messages.push(row.orderName+(sync.checked?" updated":" · No active ACS tracking found"));
+        }else throw new Error("No linked Shopify order.");
+        continue;
+      }
       if (row.carrier !== "Geniki" || !row.voucher)
         throw new Error("Select a Geniki voucher");
       const api = genikiFor(row),
         key = await credentials(row);
-      if (intent === "cancel") {
-        if (f.get("confirmCancel") !== "on")
+      if (rowCancel || intent === "cancel") {
+        if (!rowCancel && f.get("confirmCancel") !== "on")
           throw new Error("Confirm cancellation first");
         await api.cancel(key, row.jobId);
         await db.courierShipment.update({
@@ -333,7 +381,7 @@ function OrderCollection({order}) {
 }
 
 export default function Workspace() {
-  const { view, rules, orders, rows, country, carrier, date, next, employees, accessNotice } =
+  const { view, rules, orders, rows, country, carrier, date, next, employees, accessNotice, pickupLists=[],pickupWarning,sandbox } =
       useLoaderData(),
     result = useActionData(),
     busy = useNavigation().state !== "idle";
@@ -416,7 +464,7 @@ export default function Workspace() {
         )}
         {view==="orders" && <details open={!employees.length || undefined}><summary>Add an employee</summary><Form method="post"><label>Employee name <input name="name" required maxLength={100}/></label><button name="intent" value="addEmployee">Add employee</button></Form></details>}
         <Form method="post" key={view + p.toString()}>
-          <fieldset disabled={busy}>
+          <fieldset disabled={busy}><input type="hidden" name="dailyDate" value={date}/>
             {view === "rules" ? (
               <>
                 {Object.entries(countries).map(([k, v]) => (
@@ -453,7 +501,7 @@ export default function Workspace() {
                     </button>
                   ) : (
                     <button name="intent" value="refresh">
-                      Refresh selected Geniki shipments
+                      Refresh selected shipments
                     </button>
                   )}
                 </div>
@@ -494,14 +542,12 @@ export default function Workspace() {
                               name="selected"
                               value={r.id}
                               aria-label={"Select " + (r.name || r.orderName)}
-                              disabled={
-                                view === "tracking" && r.carrier !== "Geniki"
-                              }
+                              disabled={view==="tracking" && (r.status==="Cancelled" || (sandbox && r.carrier==="ACS"))}
                             />
                           </td>
                           <td>
                             {r.name || r.orderName}
-                            {view==="orders" && <div className="recipient">{r.shippingAddress.name}</div>}
+                            <div className="recipient">{view==="orders"?r.shippingAddress.name:r.recipientName}</div>{view!=="orders" && <small>{r.addressPreview || "—"}</small>}
                             {r.label && <Link to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.label.id})}> · Existing voucher {r.label.voucher}</Link>}
                             {(r.test || r.environment === "test") && " · Test"}
                           </td>
@@ -548,7 +594,7 @@ export default function Workspace() {
                           {view !== "orders" && (
                             <>
                               <td>{r.carrier==="Geniki" && r.voucher?<Link to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.id})}>{r.voucher}</Link>:r.voucher||"—"}</td>
-                              <td>{r.status}</td>
+                              <td>{r.status}{view==="daily" && r.voucher && r.status!=="Cancelled" && <div><button type="submit" name="intent" value={"cancel-row:"+r.id} disabled={sandbox&&r.carrier==="ACS"} onClick={e=>{if(!window.confirm("Cancel "+r.carrier+" voucher "+r.voucher+" for "+r.orderName+"? Review its Shopify fulfillment separately."))e.preventDefault()}}>Cancel voucher</button></div>}</td>
                             </>
                           )}
                         </tr>
@@ -559,19 +605,6 @@ export default function Workspace() {
                 {!(view === "orders" ? orders : rows).length && (
                   <p>No shipments match this view.</p>
                 )}
-                {view === "daily" && carrier === "Geniki" && (
-                  <details>
-                    <summary>Cancel selected vouchers</summary>
-                    <label>
-                      <input type="checkbox" name="confirmCancel" /> Cancel with
-                      Geniki. Review the corresponding Shopify fulfillments
-                      separately.
-                    </label>
-                    <button name="intent" value="cancel">
-                      Cancel selected vouchers
-                    </button>
-                  </details>
-                )}
                 {view === "orders" && next && (
                   <Link to={href({ after: next })}>Next orders →</Link>
                 )}
@@ -579,9 +612,12 @@ export default function Workspace() {
             )}
           </fieldset>
         </Form>
-        {view === "daily" && carrier === "Geniki" && (
+        {view==="daily" && carrier!=="Geniki" && <details><summary>ACS pickup lists</summary>
+      {sandbox?<p>ACS pickup lists are disabled in the test store.</p>:<Form method="post"><input type="hidden" name="dailyDate" value={date}/><button name="intent" value="acsPickup" disabled={busy} onClick={e=>{if(!window.confirm("Issue the ACS pickup list for "+date+"?"))e.preventDefault()}}>Issue ACS pickup list</button></Form>}
+      {pickupWarning&&<p>{pickupWarning}</p>}{pickupLists.map(l=><p key={l.pickupListNo}><a href={l.url} target="_blank" rel="noreferrer">Print ACS list {l.pickupListNo}</a> · {l.listVouchersCount} vouchers</p>)}</details>}
+        {view === "daily" && carrier !== "ACS" && (
           <details>
-            <summary>Finalize daily handover</summary>
+            <summary>Geniki · Finalize daily handover</summary>
             <Form method="post">
               <input type="hidden" name="closeDate" value={date} />
               <p>
@@ -627,7 +663,7 @@ export default function Workspace() {
         )}
       </section>
       <footer>
-        <Link to={"/app/acs-vouchers?" + p}>ACS daily operations</Link>
+        <Link to={href({view:"daily",carrier:"ACS"})}>ACS Daily Labels</Link>
         <Link to={href({ view: "daily", carrier: "Geniki" })}>
           Geniki Daily Labels
         </Link>

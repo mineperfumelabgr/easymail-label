@@ -153,6 +153,8 @@ model CourierShipment {
   returnSerial String?
   previousId String? @unique
   codAmount Float?
+  recipientName String?
+  addressPreview String?
   preparedBy String?
   pieces Int?
   fulfillmentPlan Json?

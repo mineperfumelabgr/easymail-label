@@ -49,6 +49,8 @@ export async function createGenikiParcel(
         orderId,
         orderName: fields.reference,
         country: fields.country,
+        recipientName: fields.name,
+        addressPreview:[fields.address, fields.zip, fields.city].filter(Boolean).join(', '),
         carrier: "Geniki",
         codAmount:fields.cod || 0,
         reference: randomUUID(),

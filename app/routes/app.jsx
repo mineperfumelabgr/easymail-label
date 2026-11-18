@@ -17,11 +17,9 @@ export default function App() {
     <AppProvider embedded apiKey={apiKey}>
       <s-app-nav>
         <s-link href="/app">Home</s-link>
-        <s-link href="/app/acs-vouchers">ACS Daily Labels</s-link>
-        <s-link href="/app/acs-tracking">ACS Tracking</s-link>
+        <s-link href="/app?view=daily">Daily Labels</s-link>
         <s-link href="/app/acs-tracking-settings">ACS Tag Settings</s-link>
         <s-link href="/app/acs-custom-shipment">Custom ACS Shipment</s-link>
-        <s-link href="/app?view=daily&amp;carrier=Geniki">Geniki Daily Labels</s-link>
         <s-link href="/app/geniki-operations">Geniki shipments and tags</s-link>
         <s-link href="/app/vouchers">EasyMail Daily Labels</s-link>
         <s-link href="/app/employees">Dipendenti</s-link>

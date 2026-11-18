@@ -93,6 +93,8 @@ export async function issue(admin, shop, orderId, carrier, weight, options = {})
         environment,
         orderName: order.name,
         country: address.countryCodeV2,
+        recipientName:address.name,
+        addressPreview:[address.address1,address.address2,address.zip,address.city].filter(Boolean).join(", "),
         carrier,
         codAmount,
         preparedBy: order.acs?.value ? null : options.employeeName,
