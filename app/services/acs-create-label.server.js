@@ -263,6 +263,8 @@ export async function createOrReuseAcsLabel({
   admin,
   orderGid,
   forceNew = false,
+  expectedVoucher = null,
+  beforeSubmit = () => {},
   pieces = 1,
   codOverride = null,
   codAmountOverride = null,
@@ -289,6 +291,7 @@ export async function createOrReuseAcsLabel({
   const existingCurrentNumbersRaw = safeStr(get(KEY_CURRENT_NUMBERS));
   const existingPickupDate = safeStr(get(KEY_PICKUP_DATE));
 
+  if(expectedVoucher && expectedVoucher!==existingVoucher) throw new Error("Voucher changed. Reload before replacing it.");
   if (existingVoucher && !forceNew) {
     let nums = [];
     if (existingCurrentNumbersRaw) {
@@ -416,6 +419,7 @@ const contentTypeId = ["CY", "BG"].includes(country) ? requestedContentTypeId : 
   console.log("ACS CREATE PAYLOAD:");
   console.dir(payload, { depth: 10 });
 
+beforeSubmit();
 const createResp = await createAcsVoucher(payload);
 console.log("ACS CREATE RESPONSE:");
 console.dir(createResp, { depth: 10 });

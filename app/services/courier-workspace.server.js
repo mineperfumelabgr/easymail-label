@@ -108,14 +108,16 @@ export async function issue(admin, shop, orderId, carrier, weight, options = {})
   if (carrier === "ACS") {
     if (!fresh && !order.acs?.value)
       throw new Error("Check the earlier ACS request before retrying");
+    let submitted=false;
     const r = await createOrReuseAcsLabel({
+      beforeSubmit:()=>{submitted=true},
       admin,
       orderGid: orderId,
       requestedPickupDate: options.pickupDate || todayYMD(),
       pieces: options.pieces || 1,
       codOverride: codAmount > 0,
       codAmountOverride: codAmount || null,
-    });
+    }).catch(async error=>{if(fresh && !submitted)await db.courierShipment.deleteMany({where:{id:row.id,voucher:null}});throw error});
     return db.courierShipment.update({
       where: { id: row.id },
       data: {
@@ -142,7 +144,7 @@ export async function issue(admin, shop, orderId, carrier, weight, options = {})
         CodAmount: codAmount,
         InsAmount: 0,
         ReceivedDate: new Date().toISOString(),
-      });
+      }).catch(async error=>{if(/^70[0-6]$/.test(error.genikiCode))await db.courierShipment.deleteMany({where:{id:row.id,voucher:null}});throw error});
       voucher = r.Voucher;
       jobId = r.JobId;
       subVouchers = r.SubVouchers?.Record;

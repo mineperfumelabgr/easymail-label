@@ -3,6 +3,8 @@ import {cancelAcsLabel} from "../services/acs-cancellation.server";
 import {runAcsTrackingSync} from "../services/acs-tracking-sync.server";
 import {getAcsPickupLists, extractPickupLists, issueAcsPickupList, extractIssuePickupListResult, makeAcsPickupListPdfUrl} from "../services/acs.server";
 import { orderCod } from "../services/order-cod";
+import {packingPdf} from "../services/packing-slips.server";
+import {PrintDocuments} from "../components/PrintDocuments";
 import { useState } from "react";
 import {
   Form,
@@ -16,7 +18,7 @@ import { syncGenikiFulfillment } from "../services/geniki-operations.server";
 import { PDFDocument } from "pdf-lib";
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
-import { adminGraphql, parseCodAmountOverride, parsePickupDate } from "../services/acs-create-label.server";
+import { createOrReuseAcsLabel, adminGraphql, parseCodAmountOverride, parsePickupDate } from "../services/acs-create-label.server";
 import {
   defaults,
   issue,
@@ -170,6 +172,12 @@ export async function loader({ request }) {
   return { view, rules, orders, rows, country, carrier, date, employees, next, pickupLists,pickupWarning,sandbox };
 }
 
+async function labelErrorTag(admin,id,carrier,add){
+  const mutation=add?"tagsAdd":"tagsRemove";
+  const {data}=await adminGraphql(admin,`mutation($id:ID!,$tags:[String!]!){${mutation}(id:$id,tags:$tags){userErrors{message}}}`,{id,tags:[carrier.toUpperCase()+"_LABEL_ERROR"]});
+  if(data[mutation].userErrors.length)throw new Error(data[mutation].userErrors.map(e=>e.message).join(", "));
+}
+
 export async function action({ request }) {
   const {
     admin,
@@ -241,13 +249,64 @@ export async function action({ request }) {
     if(!/^\d{4}-\d{2}-\d{2}$/.test(dailyDate))return {messages:["Invalid pickup date."]};
     try{const r=extractIssuePickupListResult(await issueAcsPickupList(dailyDate));return {messages:[r.pickupListNo?"ACS pickup list "+r.pickupListNo:r.errorMessage||"ACS did not issue a list.",...(r.unprintedVouchers||[])]}}catch(e){return {messages:[e.message]}}
   }
+  const messages=[];
+  if(intent?.startsWith("replaceAcs:")){
+    if(isCourierTestShop(shop))return {messages:["ACS live voucher issuance is disabled in this store."]};
+    const id=intent.slice(11), previous=String(f.get("previous-"+id)||"");
+    try {
+      const employee=await db.employee.findFirst({where:{shop,id:String(f.get("employee")||"")}});
+      if(!employee)throw new Error("Select the employee preparing this shipment.");
+      const {data}=await adminGraphql(admin,`query($id:ID!){order(id:$id){test cancelledAt displayFulfillmentStatus}}`,{id});
+      if(!previous || !data.order || data.order.test || data.order.cancelledAt || data.order.displayFulfillmentStatus!=="FULFILLED")throw new Error("Reload this order before replacement.");
+      const pieces=Number(f.get("replacementPieces-"+id)),raw=String(f.get("replacementCod-"+id)||"").trim(), amount=Number(raw);
+      if(!raw || !Number.isFinite(amount)||amount<0||!Number.isInteger(pieces)||pieces<1||pieces>5)throw new Error("Enter the parcel count and COD amount (0 for prepaid).");
+      const r=await createOrReuseAcsLabel({admin,orderGid:id,forceNew:true,expectedVoucher:previous,pieces,codOverride:amount>0,codAmountOverride:amount,requestedPickupDate:parsePickupDate(f.get("replacementDate-"+id))});
+      await db.courierShipment.updateMany({where:{shop,orderId:id,carrier:"ACS",voucher:previous},data:{voucher:r.voucherNumber,labels:r.shipmentNumbers,pieces,codAmount:amount,preparedBy:employee.name}});
+      return {messages:[r.message],pdf:await labelsPdf([{carrier:"ACS",voucher:r.voucherNumber,orderName:String(f.get("name-"+id)||id)}])};
+    }catch(error){return {messages:[error.message]}}
+  }
   if (!ids.length || ids.length > 50)
     return { messages: ["Select 1–50 rows."] };
-  const messages = [];
-  if (intent === "issue") {
+
+  const keyCache=new Map();
+  async function labelsPdf(rows) {
+    async function credentials(row){const api=genikiFor(row);if(!keyCache.has(api))keyCache.set(api,await api.authenticate());return keyCache.get(api)}
+    const pdf = await PDFDocument.create();
+    for (const row of rows) {
+      try {
+        if (!row.voucher || row.status === "Cancelled")
+          throw new Error("No active voucher");
+        for (const number of row.carrier==="ACS"?[row.voucher]:(row.labels || [row.voucher])) {
+          const bytes =
+            row.carrier === "Geniki"
+              ? await genikiFor(row).pdf(await credentials(row), number)
+              : extractPdfBytesFromAcsResponse(
+                  await printAcsVoucher(number, {
+                    printType: 1,
+                    startPosition: 1,
+                  }),
+                );
+          const src = await PDFDocument.load(bytes);
+          for (const page of await pdf.copyPages(src, src.getPageIndices()))
+            pdf.addPage(page);
+        }
+      } catch (e) {
+        messages.push(row.orderName+" · PDF: "+e.message);
+      }
+    }
+
+    return pdf.getPageCount()?Buffer.from(await pdf.save()).toString("base64"):null;
+  }
+  if(intent==="packing") {
+    try{return {packing:await packingPdf(admin,ids),messages}}catch(error){return {messages:[error.message]}}
+  }
+  if (intent === "issue" || intent==="both") {
     const employee=await db.employee.findFirst({where:{shop,id:String(f.get("employee")||"")},select:{name:true}});
     if (!employee) return {messages:["Select the employee preparing these orders."]};
+    let packing=null;
+    if(intent==="both"){try{packing=await packingPdf(admin,ids)}catch(error){return {messages:["Packing slips: "+error.message]}}}
     const issued=[];
+    const issuedRows=[];
     for (const id of ids) {
       try {
         const carrier=f.get("carrier-"+id);
@@ -262,7 +321,8 @@ export async function action({ request }) {
           codOverride:mode==="yes"?true:mode==="no"?false:null,
           codAmount:mode==="yes"?parseCodAmountOverride(f.get("amount-"+id)):null,
         });
-        issued.push(r.id);
+        issued.push(r.id);issuedRows.push(r);
+        try{await labelErrorTag(admin,id,carrier,false)}catch(err){messages.push(r.orderName+" · Error tag cleanup: "+err.message)}
         if (r.preparedBy) {
           try {
             const {data}=await adminGraphql(admin,`mutation($id:ID!,$tags:[String!]!){tagsAdd(id:$id,tags:$tags){userErrors{message}}}`,{id,tags:[r.preparedBy]});
@@ -271,10 +331,12 @@ export async function action({ request }) {
         }
         messages.push(r.orderName + " · " + r.carrier + " · " + r.voucher);
       } catch (e) {
-        messages.push(id.split("/").pop() + " · " + e.message);
+        const courier=f.get("carrier-"+id);const name=String(f.get("name-"+id)||id.split("/").pop());
+        messages.push(name+" · "+(courier||"Courier")+" · "+e.message);
+        if(["ACS","Geniki"].includes(courier))try{await labelErrorTag(admin,id,courier,true)}catch(err){messages.push(name+" · Could not apply error tag: "+err.message)}
       }
     }
-    return { messages, issued };
+    return { messages, issued, packing, pdf:await labelsPdf(issuedRows) };
   }
   const rows = await db.courierShipment.findMany({
     where: { shop, id: { in: ids } },
@@ -294,35 +356,7 @@ export async function action({ request }) {
     if (!keys.has(api)) keys.set(api, await api.authenticate());
     return keys.get(api);
   }
-  if (intent === "print") {
-    const pdf = await PDFDocument.create();
-    for (const row of rows) {
-      try {
-        if (!row.voucher || row.status === "Cancelled")
-          throw new Error("No active voucher");
-        for (const number of row.labels || [row.voucher]) {
-          const bytes =
-            row.carrier === "Geniki"
-              ? await genikiFor(row).pdf(await credentials(row), number)
-              : extractPdfBytesFromAcsResponse(
-                  await printAcsVoucher(number, {
-                    printType: 1,
-                    startPosition: 1,
-                  }),
-                );
-          const src = await PDFDocument.load(bytes);
-          for (const page of await pdf.copyPages(src, src.getPageIndices()))
-            pdf.addPage(page);
-        }
-      } catch (e) {
-        return { messages: [row.orderName + " · " + e.message] };
-      }
-    }
-    return {
-      pdf: Buffer.from(await pdf.save()).toString("base64"),
-      messages: ["Combined PDF ready."],
-    };
-  }
+  if(intent==="print")return {pdf:await labelsPdf(rows),messages};
   for (const row of rows) {
     try {
       if(row.carrier==="ACS"){
@@ -495,15 +529,13 @@ export default function Workspace() {
                 <div className="controls">
                   {view === "orders" ? (
                     <>
-                      <label>Prepared by <select name="employee" required defaultValue=""><option value="">Select employee</option>{employees.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></label>
+                      <label>Prepared by <select name="employee" defaultValue=""><option value="">Select employee</option>{employees.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></label>
                       <Link to={"/app/employees?"+p}>Manage employees</Link>
-                      <button name="intent" value="issue">
-                        Generate selected vouchers
-                      </button>
+                      <button name="intent" value="both">Prepare packing slips + vouchers</button><button name="intent" value="packing" formNoValidate>Print packing slips only</button><button name="intent" value="issue">Prepare vouchers only</button>
                     </>
                   ) : view === "daily" ? (
                     <button name="intent" value="print">
-                      Download selected as one PDF
+                      Print selected labels
                     </button>
                   ) : (
                     <button name="intent" value="refresh">
@@ -552,7 +584,7 @@ export default function Workspace() {
                             />
                           </td>
                           <td>
-                            {r.name || r.orderName}
+                            {r.name || r.orderName}<input type="hidden" name={"name-"+r.id} value={r.name||r.orderName}/>
                             {view==="orders" && <div><small>{r.displayFulfillmentStatus?.toLowerCase().replaceAll("_"," ")}</small>{r.tags.map(tag=><span key={tag} style={{display:"inline-block",margin:"2px 3px",padding:"1px 6px",border:"1px solid #ccc",borderRadius:8}}>{tag}</span>)}</div>}
                             <div className="recipient">{view==="orders"?r.shippingAddress?.name:r.recipientName}</div>{view!=="orders" && <small>{r.addressPreview || "—"}</small>}
                             {r.label && <Link to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.label.id})}> · Existing voucher {r.label.voucher}</Link>}
@@ -597,7 +629,12 @@ export default function Workspace() {
                               {r.shipment?.weight!=null && <div>Weight {r.shipment.weight} kg</div>}
                               {r.acsPickup?.value && <div>Pickup {r.acsPickup.value}</div>}
                               {r.shipment?.preparedBy && <div>Prepared by {r.shipment.preparedBy}</div>}
-                              {r.label?<Link to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.label.id})}>Issue a replacement voucher…</Link>:r.acsVoucher?.value && <a href={"shopify:admin/orders/"+r.id.split("/").pop()} target="_top">Open order for ACS voucher replacement…</a>}
+                              {r.label?<Link to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.label.id})}>Issue a replacement voucher…</Link>:r.acsVoucher?.value && <details><summary>Replace ACS voucher…</summary>
+                      <input type="hidden" name={"previous-"+r.id} value={r.acsVoucher.value}/>
+                      <label>Parcels <input name={"replacementPieces-"+r.id} type="number" min="1" max="5" defaultValue={r.acsPieces?.value||1}/></label>
+                      <label>Pickup <input type="date" name={"replacementDate-"+r.id} defaultValue={date}/></label>
+                      <label>COD (€) <input name={"replacementCod-"+r.id} type="number" step=".01" min="0" defaultValue={r.shipment?.codAmount??""} placeholder="Enter 0 for prepaid"/></label>
+                      <button name="intent" value={"replaceAcs:"+r.id} disabled={sandbox} formNoValidate onClick={e=>{if(!window.confirm("Create a new ACS voucher for "+r.name+"? The previous label may still be active."))e.preventDefault()}}>Issue replacement</button></details>}
                             </td>:view==="orders"?<td><div className="parcel-controls">
                             <label>Parcels <select name={"pieces-"+r.id} defaultValue="1">{[1,2,3,4,5].map(n=><option key={n}>{n}</option>)}</select></label>
                             {(choices[r.id]||rules[r.shippingAddress?.countryCodeV2])==="Geniki"?<label>Total kg <input type="number" name={"weight-"+r.id} step=".01" min=".01" defaultValue="1"/></label>:<details><summary>ACS options</summary>
@@ -666,15 +703,7 @@ export default function Workspace() {
             ))}
           </div>
         )}
-        {result?.issued?.length>0 && <Form method="post">{result.issued.map(id=><input key={id} type="hidden" name="selected" value={id}/>)}<button name="intent" value="print" disabled={busy}>Print generated labels in one PDF</button></Form>}
-        {result?.pdf && (
-          <a
-            download="courier-labels.pdf"
-            href={"data:application/pdf;base64," + result.pdf}
-          >
-            Save combined PDF
-          </a>
-        )}
+        {result && <PrintDocuments result={result}/>}
       </section>
       <footer>
         <Link to={href({view:"daily",carrier:"ACS"})}>ACS Daily Labels</Link>
