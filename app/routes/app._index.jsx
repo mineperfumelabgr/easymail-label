@@ -56,11 +56,19 @@ export async function loader({ request }) {
     rows = [];
   let next = null;
   if (view === "orders") {
-    const { data } = await adminGraphql(
+    let response;
+    try {
+      response = await adminGraphql(
       admin,
       `query($after:String){orders(first:50,after:$after,sortKey:CREATED_AT,reverse:true,query:"status:open fulfillment_status:unfulfilled OR fulfillment_status:partial"){pageInfo{endCursor hasNextPage} nodes{id name test shippingAddress{countryCodeV2} cancelledAt}}}`,
       { after: p.get("after") },
     );
+    } catch (error) {
+      if (!/not approved to access the Order object|protected customer data/i.test(error.message)) throw error;
+      return { view, rules, orders, rows, country, carrier, date, next,
+        accessNotice: "Shopify has restricted order access. In the Dev Dashboard, open this app’s Settings → Access requests → Protected customer data. Enable access, save, and reload this page." };
+    }
+    const { data } = response;
     orders = data.orders.nodes.filter(
       (o) => o.shippingAddress && !o.cancelledAt,
     );
@@ -280,7 +288,7 @@ export async function action({ request }) {
 }
 
 export default function Workspace() {
-  const { view, rules, orders, rows, country, carrier, date, next } =
+  const { view, rules, orders, rows, country, carrier, date, next, accessNotice } =
       useLoaderData(),
     result = useActionData(),
     busy = useNavigation().state !== "idle";
@@ -318,6 +326,7 @@ export default function Workspace() {
         </nav>
       </header>
       <section>
+        {accessNotice && <p role="alert">{accessNotice}</p>}
         <h2>
           {view === "daily" && carrier === "Geniki"
             ? "Geniki Daily Labels"
