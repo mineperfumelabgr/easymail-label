@@ -127,3 +127,31 @@ model AcsManualShipment {
   @@unique([shop, voucherNo])
   @@index([shop, createdAt])
 }
+
+model CourierRule {
+  shop String
+  country String
+  carrier String
+  @@id([shop, country])
+}
+
+model CourierShipment {
+  id String @id @default(cuid())
+  shop String
+  orderId String
+  orderName String
+  country String
+  carrier String
+  environment String
+  reference String @unique
+  jobId String?
+  voucher String?
+  labels Json?
+  checkedAt DateTime?
+  fulfillmentPlan Json?
+  status String @default("Creating")
+  fulfillmentId String?
+  createdAt DateTime @default(now())
+  @@unique([shop, orderId, environment])
+  @@index([shop, carrier, createdAt])
+}

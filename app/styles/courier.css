@@ -1,0 +1,87 @@
+.courier {
+  font:
+    15px/1.5 system-ui,
+    sans-serif;
+  color: #182b37;
+  max-width: 1250px;
+  margin: auto;
+  padding: clamp(12px, 3vw, 38px);
+}
+.courier header,
+.courier section {
+  background: white;
+  border: 1px solid #d9e0e1;
+  border-radius: 14px;
+  padding: clamp(14px, 2vw, 26px);
+  margin-bottom: 16px;
+}
+.courier h1,
+.courier h2 {
+  margin: 0 0 16px;
+  letter-spacing: -0.035em;
+}
+.courier nav,
+.courier footer,
+.courier .controls,
+.courier fieldset {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.courier nav a,
+.courier footer a {
+  color: #205954;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.courier nav a {
+  padding: 6px 12px;
+  text-decoration: none;
+  border-radius: 8px;
+}
+.courier nav a[aria-current] {
+  background: #dceee7;
+  color: #133e32;
+}
+.courier fieldset {
+  border: 0;
+  padding: 0;
+  margin: 16px 0;
+  min-width: 0;
+}
+.courier select,
+.courier input:not([type="checkbox"]),
+.courier button {
+  border: 1px solid #aab8b9;
+  border-radius: 7px;
+  padding: 8px;
+  color: inherit;
+  background: white;
+}
+.courier button {
+  background: #184d43;
+  color: white;
+  cursor: pointer;
+}
+.courier .scroll {
+  width: 100%;
+  overflow: auto;
+}
+.courier table {
+  border-collapse: collapse;
+  width: 100%;
+  white-space: nowrap;
+}
+.courier td,
+.courier th {
+  padding: 10px;
+  text-align: left;
+  border-bottom: 1px solid #e2e7e6;
+}
+.courier th {
+  background: #f4f7f6;
+}
+.courier footer {
+  padding: 6px;
+}

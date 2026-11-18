@@ -7,6 +7,8 @@ import {
   splitStreetAndNumber,
 } from "./acs.server";
 
+import prisma from "../db.server";
+
 const NS = "acs";
 
 const KEY_VOUCHER = "voucher_number";
@@ -271,6 +273,8 @@ export async function createOrReuseAcsLabel({
     throw new Error("Missing ACS_BILLING_CODE in environment.");
   }
 
+  const geniki = await prisma.courierShipment.findFirst({where:{orderId:orderGid,carrier:"Geniki",status:{not:"Cancelled"}},select:{id:true}});
+  if (geniki) throw new Error("This order has a Geniki shipment. Review it in Courier Label.");
   const order = await getAcsOrder(admin, orderGid);
   if (!order) {
     throw new Error("Order not found or access denied.");
