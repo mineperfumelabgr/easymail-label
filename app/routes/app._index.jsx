@@ -89,7 +89,7 @@ export async function loader({ request }) {
     const limit=Number(p.get("limit"));
     let response;
     try {
-      const query=`query($after:String,$filter:String,$limit:Int!){orders(first:$limit,after:$after,sortKey:CREATED_AT,reverse:true,query:$filter){pageInfo{endCursor hasNextPage} nodes{id name acsVoucher:metafield(namespace:"acs",key:"voucher_number"){value} acsPieces:metafield(namespace:"acs",key:"pieces"){value} acsPickup:metafield(namespace:"acs",key:"pickup_date"){value} displayFulfillmentStatus test tags paymentGatewayNames totalOutstandingSet{shopMoney{amount currencyCode}} shippingAddress{name countryCodeV2} cancelledAt}}}`;
+      const query=`query($after:String,$filter:String,$limit:Int!){orders(first:$limit,after:$after,sortKey:CREATED_AT,reverse:true,query:$filter){pageInfo{endCursor hasNextPage} nodes{id name acsVoucher:metafield(namespace:"acs",key:"voucher_number"){value} acsPieces:metafield(namespace:"acs",key:"pieces"){value} acsPickup:metafield(namespace:"acs",key:"pickup_date"){value} displayFulfillmentStatus test tags paymentGatewayNames totalOutstandingSet{shopMoney{amount currencyCode}} currentTotalPriceSet{shopMoney{amount currencyCode}} shippingAddress{name countryCodeV2} cancelledAt}}}`;
       const variables={after:p.get("after"),filter:scopes[scope],limit:[50,100,150,200].includes(limit)?limit:50};
       try {
         response=await adminGraphql(admin,query.replace("shippingAddress{name","shippingAddress{phone name"),variables);
@@ -450,7 +450,7 @@ function OrderCollection({order}) {
   const amount=edited?.amount ?? (Number.isFinite(cod.amount)?cod.amount.toFixed(2):"");
   return <div className="order-collection">
     <label><input type="checkbox" checked={enabled} onChange={e=>setEdited({enabled:e.target.checked,amount})}/> COD</label>
-    {cod.identified && <small>{cod.amount===0?"COD order · no balance due":"COD from order"}</small>}
+    {cod.identified && <small>{enabled?"COD · "+cod.source:"COD order · no balance due"}</small>}
     <input type="hidden" name={"cod-"+order.id} value={edited===null?"auto":enabled?"yes":"no"}/>
     {enabled && <label>Collect (€) <input type="number" min=".01" step=".01" name={"amount-"+order.id} value={amount}
       onChange={e=>setEdited({enabled:true,amount:e.target.value})}/></label>}

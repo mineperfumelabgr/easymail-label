@@ -23,7 +23,7 @@ export async function issue(admin, shop, orderId, carrier, weight, options = {})
     admin,
     `query($id:ID!){order(id:$id){
     id name test cancelledAt displayFulfillmentStatus tags displayFinancialStatus paymentGatewayNames
-    totalOutstandingSet{shopMoney{amount currencyCode}}
+    totalOutstandingSet{shopMoney{amount currencyCode}} currentTotalPriceSet{shopMoney{amount currencyCode}}
     shippingAddress{name address1 address2 city zip phone countryCodeV2}
     acs:metafield(namespace:"acs",key:"voucher_number"){value}
     fulfillments(first:100){id trackingInfo{number}}
