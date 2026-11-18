@@ -5,16 +5,20 @@ import { genikiLive, genikiSandbox, genikiParcelNumbers } from "./geniki.server"
 
 
 export async function applyGenikiTag(admin, row, status) {
+  if (row.country !== "GR") return;
   const orderId = row.sourceOrderId || row.orderId;
   if (!orderId.startsWith("gid://shopify/Order/")) return;
   const rule = await db.genikiTagRule.findUnique({
     where: { shop_status: { shop: row.shop, status: status.toUpperCase() } },
   });
-  if (!rule?.tag) return;
+  const returnStatus = {"IN RETURN":"RETURNING","RETURN TO SENDER":"RETURNED"}[status.toUpperCase()];
+  const shared = returnStatus ? await db.acsTrackingTagRule.findFirst({where:{shop:row.shop,status:returnStatus,enabled:true}}) : null;
+  const tags=[...new Set([shared?.tag,rule?.tag].map(t=>t?.trim()).filter(Boolean))];
+  if (!tags.length) return;
   const r = await adminGraphql(
     admin,
     `mutation($id:ID!,$tags:[String!]!){tagsAdd(id:$id,tags:$tags){userErrors{message}}}`,
-    { id: orderId, tags: [rule.tag] },
+    { id: orderId, tags },
   );
   if (r.data.tagsAdd.userErrors.length)
     throw new Error(r.data.tagsAdd.userErrors[0].message);
@@ -54,6 +58,7 @@ export async function createGenikiParcel(
         carrier: "Geniki",
         codAmount:fields.cod || 0,
         reference: randomUUID(),
+        weight:fields.weight,
         ...extra,
       },
     });

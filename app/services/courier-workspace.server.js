@@ -22,7 +22,7 @@ export async function issue(admin, shop, orderId, carrier, weight, options = {})
   const { data } = await adminGraphql(
     admin,
     `query($id:ID!){order(id:$id){
-    id name test cancelledAt tags displayFinancialStatus paymentGatewayNames
+    id name test cancelledAt displayFulfillmentStatus tags displayFinancialStatus paymentGatewayNames
     totalOutstandingSet{shopMoney{amount currencyCode}}
     shippingAddress{name address1 address2 city zip phone countryCodeV2}
     acs:metafield(namespace:"acs",key:"voucher_number"){value}
@@ -35,6 +35,7 @@ export async function issue(admin, shop, orderId, carrier, weight, options = {})
   const order = data.order;
   if (!order || order.cancelledAt || !order.shippingAddress)
     throw new Error("Order cannot be shipped");
+  if (order.displayFulfillmentStatus === "FULFILLED") throw new Error("This order is fulfilled. Use the dedicated replacement voucher action.");
   const address = order.shippingAddress;
   const testShipment = order.test || isCourierTestShop(shop);
   const environment = testShipment ? "test" : "live";
@@ -97,6 +98,7 @@ export async function issue(admin, shop, orderId, carrier, weight, options = {})
         addressPreview:[address.address1,address.address2,address.zip,address.city].filter(Boolean).join(", "),
         carrier,
         codAmount,
+        weight:carrier==="Geniki"?weight:null,
         preparedBy: order.acs?.value ? null : options.employeeName,
         pieces: order.acs?.value ? null : options.pieces || 1,
         reference: randomUUID(),

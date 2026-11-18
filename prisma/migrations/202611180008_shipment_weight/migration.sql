@@ -1,0 +1,1 @@
+ALTER TABLE "CourierShipment" ADD COLUMN "weight" DOUBLE PRECISION;

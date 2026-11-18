@@ -153,6 +153,7 @@ model CourierShipment {
   returnPending Boolean @default(false)
   returnSerial String?
   previousId String? @unique
+  weight Float?
   codAmount Float?
   recipientName String?
   addressPreview String?

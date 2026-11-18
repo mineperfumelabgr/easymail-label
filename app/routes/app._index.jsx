@@ -86,7 +86,7 @@ export async function loader({ request }) {
     try {
       response = await adminGraphql(
       admin,
-      `query($after:String,$filter:String,$limit:Int!){orders(first:$limit,after:$after,sortKey:CREATED_AT,reverse:true,query:$filter){pageInfo{endCursor hasNextPage} nodes{id name displayFulfillmentStatus test tags paymentGatewayNames totalOutstandingSet{shopMoney{amount currencyCode}} shippingAddress{name countryCodeV2} cancelledAt}}}`,
+      `query($after:String,$filter:String,$limit:Int!){orders(first:$limit,after:$after,sortKey:CREATED_AT,reverse:true,query:$filter){pageInfo{endCursor hasNextPage} nodes{id name acsVoucher:metafield(namespace:"acs",key:"voucher_number"){value} acsPieces:metafield(namespace:"acs",key:"pieces"){value} acsPickup:metafield(namespace:"acs",key:"pickup_date"){value} displayFulfillmentStatus test tags paymentGatewayNames totalOutstandingSet{shopMoney{amount currencyCode}} shippingAddress{name countryCodeV2} cancelledAt}}}`,
       { after: p.get("after"), filter:scopes[scope], limit:[50,100,150,200].includes(limit)?limit:50 },
     );
     } catch (error) {
@@ -98,9 +98,11 @@ export async function loader({ request }) {
     orders = data.orders.nodes.filter(
       (o) => [o.name,o.shippingAddress?.name].some(value=>String(value||"").toLocaleLowerCase().includes((p.get("q")||"").trim().toLocaleLowerCase())),
     );
-    const existing = await db.courierShipment.findMany({where:{shop,carrier:"Geniki",orderId:{in:orders.map(o=>o.id)},voucher:{not:null}},select:{id:true,orderId:true,voucher:true}});
+    const orderIds=orders.map(o=>o.id);
+    const existing=await db.courierShipment.findMany({where:{shop,OR:[{orderId:{in:orderIds}},{sourceOrderId:{in:orderIds}}],voucher:{not:null},status:{notIn:["Cancelled","Superseded"]}},orderBy:{createdAt:"desc"},select:{id:true,orderId:true,sourceOrderId:true,carrier:true,weight:true,pieces:true,preparedBy:true,codAmount:true,voucher:true}});
     for(const order of orders){
-      order.label=existing.find(row=>row.orderId===order.id);
+      order.shipment=existing.find(row=>(row.sourceOrderId||row.orderId)===order.id && (row.carrier!=="ACS" || !order.acsVoucher?.value || row.voucher===order.acsVoucher.value));
+      order.label=order.shipment?.carrier==="Geniki"?order.shipment:null;
       order.environment=(order.test || isCourierTestShop(shop)) ? "test" : "live";
     }
     if (data.orders.pageInfo.hasNextPage) next = data.orders.pageInfo.endCursor;
@@ -546,7 +548,7 @@ export default function Workspace() {
                               name="selected"
                               value={r.id}
                               aria-label={"Select " + (r.name || r.orderName)}
-                              disabled={(view==="orders" && (!r.shippingAddress || r.cancelledAt || r.displayFulfillmentStatus==="ON_HOLD")) || view==="tracking" && (r.status==="Cancelled" || (sandbox && r.carrier==="ACS"))}
+                              disabled={(view==="orders" && (r.displayFulfillmentStatus==="FULFILLED" || !r.shippingAddress || r.cancelledAt || r.displayFulfillmentStatus==="ON_HOLD")) || view==="tracking" && (r.status==="Cancelled" || (sandbox && r.carrier==="ACS"))}
                             />
                           </td>
                           <td>
@@ -565,7 +567,7 @@ export default function Workspace() {
                               "—"}
                           </td>
                           <td>
-                            {view === "orders" ? (
+                            {view === "orders" && r.displayFulfillmentStatus==="FULFILLED" ? (r.shipment?.carrier || (r.acsVoucher?.value?"ACS":"—")) : view === "orders" ? (
                               <select
                                 aria-label={"Courier for " + r.name}
                                 name={"carrier-" + r.id}
@@ -589,7 +591,14 @@ export default function Workspace() {
                               r.carrier
                             )}
                           </td>
-                          {view==="orders"?<td><div className="parcel-controls">
+                          {view==="orders" && r.displayFulfillmentStatus==="FULFILLED"?<td>
+                              <div>Voucher {r.shipment?.voucher || r.acsVoucher?.value || "—"}</div>
+                              <div>Parcels {r.shipment?.pieces ?? r.acsPieces?.value ?? "—"} · COD {r.shipment?.codAmount==null?"—":r.shipment.codAmount.toFixed(2)+" €"}</div>
+                              {r.shipment?.weight!=null && <div>Weight {r.shipment.weight} kg</div>}
+                              {r.acsPickup?.value && <div>Pickup {r.acsPickup.value}</div>}
+                              {r.shipment?.preparedBy && <div>Prepared by {r.shipment.preparedBy}</div>}
+                              {r.label?<Link to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.label.id})}>Issue a replacement voucher…</Link>:r.acsVoucher?.value && <a href={"shopify:admin/orders/"+r.id.split("/").pop()} target="_top">Open order for ACS voucher replacement…</a>}
+                            </td>:view==="orders"?<td><div className="parcel-controls">
                             <label>Parcels <select name={"pieces-"+r.id} defaultValue="1">{[1,2,3,4,5].map(n=><option key={n}>{n}</option>)}</select></label>
                             {(choices[r.id]||rules[r.shippingAddress?.countryCodeV2])==="Geniki"?<label>Total kg <input type="number" name={"weight-"+r.id} step=".01" min=".01" defaultValue="1"/></label>:<details><summary>ACS options</summary>
                             <label>Pickup <input type="date" name={"pickup-"+r.id} defaultValue={date}/></label>
