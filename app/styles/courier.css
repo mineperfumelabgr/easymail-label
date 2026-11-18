@@ -86,3 +86,4 @@
   padding: 6px;
 }
 .courier .parcel-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.courier .parcel-controls input[type=number]{width:6em}.courier .parcel-controls details[open] label{display:block;margin-top:6px}
+.courier .recipient,.courier .order-collection small{display:block;color:#526461}.courier .order-collection{border-left:2px solid #cbdad6;padding-left:10px}.courier .order-collection label{display:block}

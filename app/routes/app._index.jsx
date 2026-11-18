@@ -1,3 +1,4 @@
+import { orderCod } from "../services/order-cod";
 import { useState } from "react";
 import {
   Form,
@@ -61,7 +62,7 @@ export async function loader({ request }) {
     try {
       response = await adminGraphql(
       admin,
-      `query($after:String){orders(first:50,after:$after,sortKey:CREATED_AT,reverse:true,query:"status:open fulfillment_status:unfulfilled OR fulfillment_status:partial"){pageInfo{endCursor hasNextPage} nodes{id name test shippingAddress{countryCodeV2} cancelledAt}}}`,
+      `query($after:String){orders(first:50,after:$after,sortKey:CREATED_AT,reverse:true,query:"status:open fulfillment_status:unfulfilled OR fulfillment_status:partial"){pageInfo{endCursor hasNextPage} nodes{id name test tags paymentGatewayNames totalOutstandingSet{shopMoney{amount currencyCode}} shippingAddress{name countryCodeV2} cancelledAt}}}`,
       { after: p.get("after") },
     );
     } catch (error) {
@@ -225,10 +226,11 @@ export async function action({ request }) {
         if(!Number.isInteger(pieces)||pieces<1||pieces>5)throw new Error("Choose between 1 and 5 parcels.");
         if(!Number.isFinite(weight)||weight<=0)throw new Error("Enter a positive shipment weight.");
         const mode=f.get("cod-"+id);
+        if (mode==="yes" && !String(f.get("amount-"+id)||"").trim()) throw new Error("Enter the COD amount to collect.");
         const r = await issue(admin, shop, id, carrier, weight, {
           employeeName:employee.name,pieces,pickupDate:carrier==="ACS"?parsePickupDate(f.get("pickup-"+id)):null,
           codOverride:mode==="yes"?true:mode==="no"?false:null,
-          codAmount:carrier==="ACS"&&mode==="yes"?parseCodAmountOverride(f.get("amount-"+id)):null,
+          codAmount:mode==="yes"?parseCodAmountOverride(f.get("amount-"+id)):null,
         });
         issued.push(r.id);
         if (r.preparedBy) {
@@ -314,6 +316,20 @@ export async function action({ request }) {
     }
   }
   return { messages };
+}
+
+function OrderCollection({order}) {
+  const cod=orderCod(order);
+  const [edited,setEdited]=useState(null);
+  const enabled=edited?.enabled ?? cod.enabled;
+  const amount=edited?.amount ?? (Number.isFinite(cod.amount)?cod.amount.toFixed(2):"");
+  return <div className="order-collection">
+    <label><input type="checkbox" checked={enabled} onChange={e=>setEdited({enabled:e.target.checked,amount})}/> COD</label>
+    {cod.identified && <small>{cod.amount===0?"COD order · no balance due":"COD from order"}</small>}
+    <input type="hidden" name={"cod-"+order.id} value={edited===null?"auto":enabled?"yes":"no"}/>
+    {enabled && <label>Collect (€) <input type="number" min=".01" step=".01" name={"amount-"+order.id} value={amount}
+      onChange={e=>setEdited({enabled:true,amount:e.target.value})}/></label>}
+  </div>;
 }
 
 export default function Workspace() {
@@ -485,6 +501,7 @@ export default function Workspace() {
                           </td>
                           <td>
                             {r.name || r.orderName}
+                            {view==="orders" && <div className="recipient">{r.shippingAddress.name}</div>}
                             {r.label && <Link to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.label.id})}> · Existing voucher {r.label.voucher}</Link>}
                             {(r.test || r.environment === "test") && " · Test"}
                           </td>
@@ -525,9 +542,9 @@ export default function Workspace() {
                             <label>Parcels <select name={"pieces-"+r.id} defaultValue="1">{[1,2,3,4,5].map(n=><option key={n}>{n}</option>)}</select></label>
                             {(choices[r.id]||rules[r.shippingAddress.countryCodeV2])==="Geniki"?<label>Total kg <input type="number" name={"weight-"+r.id} step=".01" min=".01" defaultValue="1"/></label>:<details><summary>ACS options</summary>
                             <label>Pickup <input type="date" name={"pickup-"+r.id} defaultValue={date}/></label>
-                            <label>COD <select name={"cod-"+r.id} defaultValue="auto"><option value="auto">From order</option><option value="yes">Collect on delivery</option><option value="no">No collection</option></select></label>
-                            <label>COD override (€) <input type="number" name={"amount-"+r.id} step=".01" min=".01" placeholder="Order total"/></label>
-                            </details>}</div></td>:<td>{r.preparedBy||"—"} · {r.pieces||r.labels?.length||"—"}</td>}
+                            </details>}
+                            {r.shippingAddress.countryCodeV2==="GR" && <OrderCollection order={r}/>}
+                            </div></td>:<td>{r.preparedBy||"—"} · {r.pieces||r.labels?.length||"—"}</td>}
                           {view !== "orders" && (
                             <>
                               <td>{r.carrier==="Geniki" && r.voucher?<Link to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.id})}>{r.voucher}</Link>:r.voucher||"—"}</td>

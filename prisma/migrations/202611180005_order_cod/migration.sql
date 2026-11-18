@@ -1,0 +1,1 @@
+ALTER TABLE "CourierShipment" ADD COLUMN "codAmount" DOUBLE PRECISION;

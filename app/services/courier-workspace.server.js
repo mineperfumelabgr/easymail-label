@@ -1,3 +1,4 @@
+import {collectionAmount} from "./order-cod";
 import { randomUUID } from "node:crypto";
 import db from "../db.server";
 import {
@@ -80,19 +81,8 @@ export async function issue(admin, shop, orderId, carrier, weight, options = {})
       "Review fulfillment quantities and locations before shipping",
     );
   const outstanding = Number(order.totalOutstandingSet?.shopMoney?.amount);
-  const cod =
-    order.tags.includes("COD") ||
-    order.paymentGatewayNames.some((n) =>
-      /cash on delivery|αντικαταβολ|\bCOD\b/i.test(n),
-    );
-  if (
-    !row &&
-    carrier === "Geniki" &&
-    outstanding > 0 &&
-    (!cod ||
-      address.countryCodeV2 !== "GR" ||
-      order.totalOutstandingSet.shopMoney.currencyCode !== "EUR")
-  )
+  const codAmount = collectionAmount(order, options.codOverride, options.codAmount);
+  if (!row && carrier==="Geniki" && outstanding>0 && codAmount===0 && options.codOverride!==false)
     throw new Error("Review outstanding payment before shipping");
   const fresh = !row;
   if (!row)
@@ -104,6 +94,7 @@ export async function issue(admin, shop, orderId, carrier, weight, options = {})
         orderName: order.name,
         country: address.countryCodeV2,
         carrier,
+        codAmount,
         preparedBy: order.acs?.value ? null : options.employeeName,
         pieces: order.acs?.value ? null : options.pieces || 1,
         reference: randomUUID(),
@@ -118,8 +109,8 @@ export async function issue(admin, shop, orderId, carrier, weight, options = {})
       orderGid: orderId,
       requestedPickupDate: options.pickupDate || todayYMD(),
       pieces: options.pieces || 1,
-      codOverride: options.codOverride ?? null,
-      codAmountOverride: options.codAmount ?? null,
+      codOverride: codAmount > 0,
+      codAmountOverride: codAmount || null,
     });
     return db.courierShipment.update({
       where: { id: row.id },
@@ -143,8 +134,8 @@ export async function issue(admin, shop, orderId, carrier, weight, options = {})
         Zip: address.zip,
         Pieces: row.pieces || 1,
         Weight: weight,
-        Services: cod && outstanding > 0 ? "ΑΜ" : "",
-        CodAmount: cod ? outstanding : 0,
+        Services: codAmount > 0 ? "ΑΜ" : "",
+        CodAmount: codAmount,
         InsAmount: 0,
         ReceivedDate: new Date().toISOString(),
       });

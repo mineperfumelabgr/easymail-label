@@ -50,6 +50,7 @@ export async function createGenikiParcel(
         orderName: fields.reference,
         country: fields.country,
         carrier: "Geniki",
+        codAmount:fields.cod || 0,
         reference: randomUUID(),
         ...extra,
       },
@@ -108,9 +109,9 @@ export async function replaceGeniki(admin, shop, previousId, weight) {
     throw new Error(
       "Review the order and fulfillment before replacing its label.",
     );
-  const amount = Number(o.totalOutstandingSet.shopMoney.amount);
+  const amount = prior.codAmount ?? Number(o.totalOutstandingSet.shopMoney.amount);
   if (
-    amount &&
+    prior.codAmount == null && amount &&
     (!(
       o.tags.includes("COD") ||
       o.paymentGatewayNames.some((n) =>

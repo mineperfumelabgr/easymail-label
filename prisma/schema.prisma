@@ -152,6 +152,7 @@ model CourierShipment {
   returnPending Boolean @default(false)
   returnSerial String?
   previousId String? @unique
+  codAmount Float?
   preparedBy String?
   pieces Int?
   fulfillmentPlan Json?
