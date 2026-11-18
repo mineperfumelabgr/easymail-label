@@ -179,3 +179,31 @@ export async function replaceGeniki(admin, shop, previousId, weight) {
   ]);
   return row;
 }
+
+export async function syncGenikiFulfillment(admin, row, result) {
+  const status = String(result.Status || "").trim().toUpperCase();
+  const target = String(result.DeliveredAt || "").trim().toUpperCase();
+  const returned = status === "DELIVERED" && target === "RETURN TO SENDER";
+  const delivered = status === "DELIVERED" && target === "RECIPIENT";
+  const mapped = delivered ? "DELIVERED" : returned || status === "IN RETURN" ? "FAILURE" : status === "IN TRANSIT" ? "IN_TRANSIT" : null;
+  await applyGenikiTag(admin, row, returned ? "RETURN TO SENDER" : status);
+  if (!mapped || !row.fulfillmentId) return;
+  await db.$transaction(async tx => {
+    // Serialize refreshes of this shipment and re-read Shopify after acquiring the lock.
+    const current = await tx.courierShipment.update({where:{id:row.id},data:{checkedAt:new Date()}});
+    if (current.genikiTerminalSynced || ["Cancelled","Superseded"].includes(current.status) || current.fulfillmentId !== row.fulfillmentId) return;
+    const {data} = await adminGraphql(admin,`query($id:ID!){node(id:$id){... on Fulfillment {status displayStatus trackingInfo{number} events(first:1,sortKey:HAPPENED_AT,reverse:true){nodes{status}}}}}`,{id:row.fulfillmentId});
+    const fulfillment = data.node;
+    if (!fulfillment || fulfillment.status === "CANCELLED" || !fulfillment.trackingInfo.some(t=>t.number === row.voucher)) return;
+    const last = fulfillment.events.nodes[0]?.status;
+    if (last !== "DELIVERED" && fulfillment.displayStatus !== "DELIVERED" && last !== mapped && fulfillment.displayStatus !== mapped) {
+      const event={fulfillmentId:row.fulfillmentId,status:mapped,message:"Geniki "+row.voucher+" · "+(returned?"Returned to sender":status)};
+      const time = result.DeliveryDate;
+      if (delivered && time && /(?:Z|[+-]\d\d:\d\d)$/.test(time) && Number.isFinite(Date.parse(time))) event.happenedAt=new Date(time).toISOString();
+      const response=await adminGraphql(admin,`mutation($event:FulfillmentEventInput!){fulfillmentEventCreate(fulfillmentEvent:$event){userErrors{message}}}`,{event});
+      const errors=response.data.fulfillmentEventCreate.userErrors;
+      if(errors.length) throw new Error(errors.map(e=>e.message).join(", "));
+    }
+    if(delivered || returned) await tx.courierShipment.update({where:{id:row.id},data:{genikiTerminalSynced:true,status:returned?"RETURN TO SENDER":status}});
+  },{timeout:30000});
+}

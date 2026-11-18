@@ -1,4 +1,4 @@
-import { applyGenikiTag } from "../services/geniki-operations.server";
+import { syncGenikiFulfillment } from "../services/geniki-operations.server";
 import { syncGenikiTracking } from "../services/geniki.server";
 import prisma from "../db.server";
 import { unauthenticated } from "../shopify.server";
@@ -24,8 +24,8 @@ export async function action({ request }) {
       try {
         // Uses Shopify's session storage and SDK token refresh for expiring offline tokens.
         const { admin } = await unauthenticated.admin(shop);
-        const acs = await runAcsTrackingSync(admin, shop);
-        const geniki = await syncGenikiTracking(prisma, shop, (row,status)=>applyGenikiTag(admin,row,status)).catch(error => ({error:error.message}));
+        const acs = await runAcsTrackingSync(admin, shop).catch(error=>({error:error.message}));
+        const geniki = await syncGenikiTracking(prisma, shop, (row,status)=>syncGenikiFulfillment(admin,row,status)).catch(error => ({error:error.message}));
         shops.push({shop,...acs,geniki});
       } catch (error) {
         shops.push({ shop, error: error?.message || "Sync failed" });

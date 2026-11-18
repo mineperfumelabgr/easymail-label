@@ -147,6 +147,7 @@ model CourierShipment {
   jobId String?
   voucher String?
   labels Json?
+  genikiTerminalSynced Boolean @default(false)
   checkedAt DateTime?
   sourceOrderId String?
   returnPending Boolean @default(false)

@@ -12,7 +12,7 @@ import {
   useNavigation,
   useSearchParams,
 } from "react-router";
-import { applyGenikiTag } from "../services/geniki-operations.server";
+import { syncGenikiFulfillment } from "../services/geniki-operations.server";
 import { PDFDocument } from "pdf-lib";
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
@@ -79,12 +79,15 @@ export async function loader({ request }) {
   const sandbox=isCourierTestShop(shop);
   let next = null;
   if (view === "orders") {
+    const scopes = {all:null,unfulfilled:"fulfillment_status:unfulfilled",fulfilled:"fulfillment_status:fulfilled",on_hold:"fulfillment_status:on_hold"};
+    const scope=Object.hasOwn(scopes,p.get("scope"))?p.get("scope"):"unfulfilled";
+    const limit=Number(p.get("limit"));
     let response;
     try {
       response = await adminGraphql(
       admin,
-      `query($after:String,$filter:String){orders(first:50,after:$after,sortKey:CREATED_AT,reverse:true,query:$filter){pageInfo{endCursor hasNextPage} nodes{id name displayFulfillmentStatus test tags paymentGatewayNames totalOutstandingSet{shopMoney{amount currencyCode}} shippingAddress{name countryCodeV2} cancelledAt}}}`,
-      { after: p.get("scope")==="all"?null:p.get("after"), filter:p.get("scope")==="all"?null:"status:open (fulfillment_status:unfulfilled OR fulfillment_status:partial)" },
+      `query($after:String,$filter:String,$limit:Int!){orders(first:$limit,after:$after,sortKey:CREATED_AT,reverse:true,query:$filter){pageInfo{endCursor hasNextPage} nodes{id name displayFulfillmentStatus test tags paymentGatewayNames totalOutstandingSet{shopMoney{amount currencyCode}} shippingAddress{name countryCodeV2} cancelledAt}}}`,
+      { after: p.get("after"), filter:scopes[scope], limit:[50,100,150,200].includes(limit)?limit:50 },
     );
     } catch (error) {
       if (!/not approved to access the Order object|protected customer data/i.test(error.message)) throw error;
@@ -93,14 +96,14 @@ export async function loader({ request }) {
     }
     const { data } = response;
     orders = data.orders.nodes.filter(
-      (o) => o.shippingAddress && !o.cancelledAt && [o.name,o.shippingAddress.name].some(value=>String(value||"").toLocaleLowerCase().includes((p.get("q")||"").trim().toLocaleLowerCase())),
+      (o) => [o.name,o.shippingAddress?.name].some(value=>String(value||"").toLocaleLowerCase().includes((p.get("q")||"").trim().toLocaleLowerCase())),
     );
     const existing = await db.courierShipment.findMany({where:{shop,carrier:"Geniki",orderId:{in:orders.map(o=>o.id)},voucher:{not:null}},select:{id:true,orderId:true,voucher:true}});
     for(const order of orders){
       order.label=existing.find(row=>row.orderId===order.id);
       order.environment=(order.test || isCourierTestShop(shop)) ? "test" : "live";
     }
-    if (p.get("scope")!=="all" && data.orders.pageInfo.hasNextPage) next = data.orders.pageInfo.endCursor;
+    if (data.orders.pageInfo.hasNextPage) next = data.orders.pageInfo.endCursor;
   }
   if (view === "daily" || view === "tracking") {
     const where = {
@@ -352,9 +355,9 @@ export async function action({ request }) {
         if (["Cancelled","Superseded","Submitting fulfillment","Label issued"].includes(row.status))
           throw new Error("Shipment not ready for tracking");
         const r = await api.tracking(key, row.voucher);
-        if(r.Status)await applyGenikiTag(admin,row,r.Status);
-        await db.courierShipment.update({
-          where: { id: row.id },
+        if(r.Status)await syncGenikiFulfillment(admin,row,r);
+        await db.courierShipment.updateMany({
+          where: { id: row.id, status:row.status, genikiTerminalSynced:false },
           data: { status: r.Status || row.status },
         });
       } else throw new Error("Unknown action");
@@ -462,7 +465,7 @@ export default function Workspace() {
             <button>Filter</button>
           </Form>
         )}
-        {view==="orders" && <Form method="get" key={"order-filter"+p.toString()} className="controls">{[...p].filter(([k])=>!["scope","q","after"].includes(k)).map(([k,v])=><input type="hidden" key={k} name={k} value={v}/>)}<label>Show <select name="scope" defaultValue={p.get("scope")||"open"}><option value="open">Orders to fulfill</option><option value="all">All statuses · latest 50 orders</option></select></label><label>Search these orders <input name="q" defaultValue={p.get("q")||""} placeholder="Recipient or order number"/></label><button>Apply</button></Form>}
+        {view==="orders" && <Form method="get" key={"order-filter"+p.toString()} className="controls">{[...p].filter(([k])=>!["scope","limit","q","after"].includes(k)).map(([k,v])=><input type="hidden" key={k} name={k} value={v}/>)}<input type="hidden" name="scope" value={p.get("scope")||"unfulfilled"}/><nav aria-label="Fulfillment status">{[["all","All"],["unfulfilled","Unfulfilled"],["fulfilled","Fulfilled"],["on_hold","On Hold"]].map(([value,label])=><Link key={value} aria-current={(p.get("scope")||"unfulfilled")===value?"page":undefined} to={href({scope:value,after:null})}>{label}</Link>)}</nav><label>Orders per page <select name="limit" defaultValue={p.get("limit")||"50"}>{[50,100,150,200].map(n=><option key={n}>{n}</option>)}</select></label><label>Search these orders <input name="q" defaultValue={p.get("q")||""} placeholder="Recipient or order number"/></label><button>Apply</button></Form>}
         {view==="orders" && <details open={!employees.length || undefined}><summary>Add an employee</summary><Form method="post"><label>Employee name <input name="name" required maxLength={100}/></label><button name="intent" value="addEmployee">Add employee</button></Form></details>}
         <Form method="post" key={view + p.toString()}>
           <fieldset disabled={busy}><input type="hidden" name="dailyDate" value={date}/>
@@ -543,13 +546,13 @@ export default function Workspace() {
                               name="selected"
                               value={r.id}
                               aria-label={"Select " + (r.name || r.orderName)}
-                              disabled={view==="tracking" && (r.status==="Cancelled" || (sandbox && r.carrier==="ACS"))}
+                              disabled={(view==="orders" && (!r.shippingAddress || r.cancelledAt || r.displayFulfillmentStatus==="ON_HOLD")) || view==="tracking" && (r.status==="Cancelled" || (sandbox && r.carrier==="ACS"))}
                             />
                           </td>
                           <td>
                             {r.name || r.orderName}
                             {view==="orders" && <div><small>{r.displayFulfillmentStatus?.toLowerCase().replaceAll("_"," ")}</small>{r.tags.map(tag=><span key={tag} style={{display:"inline-block",margin:"2px 3px",padding:"1px 6px",border:"1px solid #ccc",borderRadius:8}}>{tag}</span>)}</div>}
-                            <div className="recipient">{view==="orders"?r.shippingAddress.name:r.recipientName}</div>{view!=="orders" && <small>{r.addressPreview || "—"}</small>}
+                            <div className="recipient">{view==="orders"?r.shippingAddress?.name:r.recipientName}</div>{view!=="orders" && <small>{r.addressPreview || "—"}</small>}
                             {r.label && <Link to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.label.id})}> · Existing voucher {r.label.voucher}</Link>}
                             {(r.test || r.environment === "test") && " · Test"}
                           </td>
@@ -568,7 +571,7 @@ export default function Workspace() {
                                 name={"carrier-" + r.id}
                                 value={
                                   choices[r.id] ||
-                                  rules[r.shippingAddress.countryCodeV2] ||
+                                  rules[r.shippingAddress?.countryCodeV2] ||
                                   ""
                                 }
                                 onChange={(e) =>
@@ -588,10 +591,10 @@ export default function Workspace() {
                           </td>
                           {view==="orders"?<td><div className="parcel-controls">
                             <label>Parcels <select name={"pieces-"+r.id} defaultValue="1">{[1,2,3,4,5].map(n=><option key={n}>{n}</option>)}</select></label>
-                            {(choices[r.id]||rules[r.shippingAddress.countryCodeV2])==="Geniki"?<label>Total kg <input type="number" name={"weight-"+r.id} step=".01" min=".01" defaultValue="1"/></label>:<details><summary>ACS options</summary>
+                            {(choices[r.id]||rules[r.shippingAddress?.countryCodeV2])==="Geniki"?<label>Total kg <input type="number" name={"weight-"+r.id} step=".01" min=".01" defaultValue="1"/></label>:<details><summary>ACS options</summary>
                             <label>Pickup <input type="date" name={"pickup-"+r.id} defaultValue={date}/></label>
                             </details>}
-                            {r.shippingAddress.countryCodeV2==="GR" && <OrderCollection order={r}/>}
+                            {r.shippingAddress?.countryCodeV2==="GR" && <OrderCollection order={r}/>}
                             </div></td>:<td>{r.preparedBy||"—"} · {r.pieces||r.labels?.length||"—"}</td>}
                           {view !== "orders" && (
                             <>
