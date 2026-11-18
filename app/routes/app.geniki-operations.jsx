@@ -1,3 +1,4 @@
+import {PrintDocuments} from "../components/PrintDocuments";
 import { randomUUID } from "node:crypto";
 import {
   Form,
@@ -127,7 +128,8 @@ export async function action({ request }) {
       }
       const pdf = await api.returnPdf(key, serial);
       return {
-        message: "Return coupon " + serial + " ready to download.",
+        message: "Return coupon " + serial + " ready to print.",
+        documentName:"Geniki return coupon",
         pdf: pdf.toString("base64"),
         number: "return-" + serial,
       };
@@ -194,7 +196,7 @@ export default function Operations() {
     result = useActionData(),
     busy = useNavigation().state !== "idle";
   return (
-    <main className="courier">
+    <main className="courier operations">
       <h1>Geniki operations</h1>
       {row && (
         <section>
@@ -214,7 +216,7 @@ export default function Operations() {
             ) &&
             !["Cancelled", "Superseded"].includes(row.status) && (
               <details>
-                <summary>Customer return</summary>
+                <summary className="action-tile return-action">Customer return</summary>
                 <Form method="post">
                   <input type="hidden" name="id" value={row.id} />
                   {row.returnSerial ? (
@@ -240,7 +242,7 @@ export default function Operations() {
                   )}
                   <button disabled={busy} name="op" value="order-return">
                     {row.returnSerial
-                      ? "Download return PDF"
+                      ? "Print return PDF"
                       : row.returnPending
                         ? "Retrieve return coupon"
                         : "Generate return PDF"}
@@ -260,7 +262,7 @@ export default function Operations() {
             )}
           {row.fulfillmentId && row.status !== "Superseded" && (
             <details>
-              <summary>Generate a new voucher for this order</summary>
+              <summary className="action-tile replacement-action">Issue a replacement voucher</summary>
               <Form method="post">
                 <input type="hidden" name="id" value={row.id} />
                 <label>
@@ -293,14 +295,7 @@ export default function Operations() {
       {result && (
         <section role="status">
           {result.message}{" "}
-          {result.pdf && (
-            <a
-              download={result.number + ".pdf"}
-              href={"data:application/pdf;base64," + result.pdf}
-            >
-              Download PDF
-            </a>
-          )}{" "}
+          {result.pdf && <PrintDocuments result={result}/>}
           {result.id && (
             <a
               href={

@@ -6,7 +6,7 @@ export function PrintDocuments({result}){
   const [active,setActive]=useState(null);
   useEffect(()=>{
     const docs=[];
-    for(const [name,data] of [["Packing slips",result.packing],["Voucher labels",result.pdf]]){
+    for(const [name,data] of [["Packing slips",result.packing],[result.documentName || "Voucher labels",result.pdf]]){
       if(!data)continue;
       const bytes=Uint8Array.from(atob(data),c=>c.charCodeAt(0));
       docs.push({name,url:URL.createObjectURL(new Blob([bytes],{type:"application/pdf"}))});

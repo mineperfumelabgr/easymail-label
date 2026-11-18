@@ -87,3 +87,27 @@
 }
 .courier .parcel-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.courier .parcel-controls input[type=number]{width:6em}.courier .parcel-controls details[open] label{display:block;margin-top:6px}
 .courier .recipient,.courier .order-collection small{display:block;color:#526461}.courier .order-collection{border-left:2px solid #cbdad6;padding-left:10px}.courier .order-collection label{display:block}
+
+.courier {color:#18303b;background:#f5f7f8;border-radius:16px}
+.courier header,.courier section{box-shadow:0 2px 7px #1939460b}
+.courier nav a[aria-current="page"]{background:#154f50;color:white;font-weight:650}
+.courier button,.courier summary,.courier a{touch-action:manipulation}
+.courier button{font-weight:600;min-height:36px;padding:7px 13px}
+.courier button:disabled{opacity:.48;cursor:default}
+.courier :is(a,button,input,select,summary):focus-visible{outline:3px solid #317daf;outline-offset:2px}
+.courier .handover{border:1px solid #b9ced4;border-radius:12px;background:#f2f8f8;margin:16px 0;padding:14px}
+.handover-head,.handover-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.handover-head{justify-content:space-between}.handover h3{margin:0}
+.handover-actions strong{display:inline-block;border-radius:12px;padding:0 7px;background:#fff;color:#154f50}
+.handover-actions button[aria-expanded="true"]{background:#102f44}
+.handover-body{margin-top:14px;border-top:1px solid #b9ced4;padding-top:14px}
+.handover-body form+form,.courier .close-day{margin-top:12px}
+.courier .close-day button,.courier button[value^="cancel-row:"]{background:#854524}
+.courier .shipment-state{display:inline-block;border-radius:14px;padding:3px 9px;font-weight:600;white-space:normal}
+.shipment-state[data-tone="success"]{background:#d9f2e4;color:#145338}.shipment-state[data-tone="warning"]{background:#ffebd6;color:#763811}.shipment-state[data-tone="info"]{background:#e3eef9;color:#1c4d77}
+.courier .action-tile,.operation-grid a,.courier footer a{display:block;border:1px solid #bdced2;border-radius:9px;padding:12px 16px;text-decoration:none;background:white;font-weight:650}
+.courier .action-tile{cursor:pointer;margin:12px 0;color:#244d66;background:#eaf3f9}
+.courier .replacement-action{background:#fff2df;color:#744212}
+.operation-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.operation-grid a{color:#154f50}.operation-grid span{display:block;color:#50616a;font-size:.9em;font-weight:400;margin-top:4px}
+.courier th{color:#354f5c;background:#edf3f4}.courier tbody tr:hover{background:#f5fafa}

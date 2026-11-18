@@ -15,14 +15,18 @@ export async function packingPdf(admin, ids) {
     if(order.items.some(item=>item.unfulfilledQuantity>0))for(const item of order.items)item.currentQuantity=item.unfulfilledQuantity;
     orders.push(order);
   }
+  return renderPdf("scripts/packing-slips.py",orders);
+}
+
+export function renderPdf(script,payload){
   return new Promise((resolve,reject)=>{
-    const child=spawn("python3",["scripts/packing-slips.py"]);
+    const child=spawn("python3",[script]);
     const chunks=[];
     child.stdout.on("data",chunk=>chunks.push(chunk));
     child.stderr.resume();
     child.on("error",reject);
     child.stdin.on("error",reject);
-    child.on("close",code=>code===0?resolve(Buffer.concat(chunks).toString("base64")):reject(new Error("Packing slip PDF generation failed")));
-    child.stdin.end(JSON.stringify(orders));
+    child.on("close",code=>code===0?resolve(Buffer.concat(chunks).toString("base64")):reject(new Error("PDF generation failed")));
+    child.stdin.end(JSON.stringify(payload));
   });
 }

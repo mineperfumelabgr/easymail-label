@@ -1,9 +1,10 @@
 import {dailyAcsLabels} from "../services/acs-daily.server";
 import {cancelAcsLabel} from "../services/acs-cancellation.server";
 import {runAcsTrackingSync} from "../services/acs-tracking-sync.server";
-import {getAcsPickupLists, extractPickupLists, issueAcsPickupList, extractIssuePickupListResult, makeAcsPickupListPdfUrl} from "../services/acs.server";
+import {printAcsPickupList,getAcsPickupLists, extractPickupLists, issueAcsPickupList, extractIssuePickupListResult, makeAcsPickupListPdfUrl} from "../services/acs.server";
 import { orderCod } from "../services/order-cod";
-import {packingPdf} from "../services/packing-slips.server";
+import {DailyHandover} from "../components/DailyHandover";
+import {packingPdf, renderPdf} from "../services/packing-slips.server";
 import {PrintDocuments} from "../components/PrintDocuments";
 import { useState } from "react";
 import {
@@ -45,6 +46,7 @@ const athensDay = (date) =>
     month: "2-digit",
     day: "2-digit",
   }).format(date);
+const activeLabel = row => Boolean(row.voucher) && !["Cancelled","Superseded"].includes(row.status);
 const genikiFor = (row) =>
   row.environment === "test" ? genikiSandbox : genikiLive;
 
@@ -77,6 +79,7 @@ export async function loader({ request }) {
   let orders = [],
     rows = [];
   const employees = view === "orders" ? await db.employee.findMany({where:{shop},select:{id:true,name:true},orderBy:{name:"asc"}}) : [];
+  let dailyTotals={ACS:0,Geniki:0};
   let pickupLists=[],pickupWarning="";
   const sandbox=isCourierTestShop(shop);
   let next = null;
@@ -112,7 +115,7 @@ export async function loader({ request }) {
   if (view === "daily" || view === "tracking") {
     const where = {
       shop,
-      ...(country ? { country } : {}),
+      ...(country && view!=="daily" ? { country } : {}),
       ...(carrier ? { carrier } : {}),
     };
     if (view === "daily") {
@@ -167,9 +170,10 @@ export async function loader({ request }) {
       if(!sandbox)try{pickupLists=extractPickupLists(await getAcsPickupLists(date)).map(l=>({...l,url:makeAcsPickupListPdfUrl(l.pickupListNo,date)}))}catch(e){pickupWarning=e.message}
     }
     await addAddresses(admin,rows);
+    if(view==="daily")for(const row of rows)if(activeLabel(row) && (row.carrier!=="Geniki" || row.environment===(sandbox?"test":"live")))dailyTotals[row.carrier]++;
     if(country) rows=rows.filter(r=>r.country===country);
   }
-  return { view, rules, orders, rows, country, carrier, date, employees, next, pickupLists,pickupWarning,sandbox };
+  return { view, rules, orders, rows, country, carrier, date, employees, next, pickupLists,pickupWarning,sandbox,dailyTotals };
 }
 
 async function labelErrorTag(admin,id,carrier,add){
@@ -210,6 +214,27 @@ export async function action({ request }) {
       ),
     );
     return { messages: ["Courier rules saved."] };
+  }
+  if(intent==="manifest" || intent==="printPickup"){
+    const date=String(f.get("dailyDate")||"");
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date))return {messages:["Invalid handover date."]};
+    try{
+      if(intent==="printPickup"){
+        if(isCourierTestShop(shop))throw new Error("ACS pickup lists use the live account.");
+        const number=String(f.get("number")||"");
+        if(!/^\d+$/.test(number))throw new Error("Invalid pickup list number");
+        const bytes=extractPdfBytesFromAcsResponse(await printAcsPickupList(number,date));
+        if(!bytes?.length)throw new Error("ACS returned no pickup list PDF.");
+        return {pdf:Buffer.from(bytes).toString("base64"),documentName:"ACS pickup list"};
+      }
+      const noon=Date.parse(date+"T12:00:00Z");
+      const environment=isCourierTestShop(shop)?"test":"live";
+      const found=await db.courierShipment.findMany({where:{shop,carrier:"Geniki",environment,createdAt:{gte:new Date(noon-36*3600000),lt:new Date(noon+36*3600000)}},orderBy:{createdAt:"asc"}});
+      const rows=found.filter(r=>athensDay(r.createdAt)===date && activeLabel(r));
+      if(!rows.length)throw new Error("No active Geniki shipments for this date.");
+      await addAddresses(admin,rows);
+      return {pdf:await renderPdf("scripts/geniki-handover.py",{date,environment,rows:rows.map(r=>[r.orderName,r.voucher,r.recipientName,r.country,String(r.pieces||r.labels?.length||1)])}),documentName:"Geniki handover list"};
+    }catch(error){return {messages:[error.message]}}
   }
   if (intent === "close") {
     const date = f.get("closeDate"),
@@ -420,7 +445,7 @@ function OrderCollection({order}) {
 }
 
 export default function Workspace() {
-  const { view, rules, orders, rows, country, carrier, date, next, employees, accessNotice, pickupLists=[],pickupWarning,sandbox } =
+  const { view, rules, orders, rows, country, carrier, date, next, employees, accessNotice, pickupLists=[],pickupWarning,sandbox,dailyTotals } =
       useLoaderData(),
     result = useActionData(),
     busy = useNavigation().state !== "idle";
@@ -502,6 +527,7 @@ export default function Workspace() {
           </Form>
         )}
         {view==="orders" && <Form method="get" key={"order-filter"+p.toString()} className="controls">{[...p].filter(([k])=>!["scope","limit","q","after"].includes(k)).map(([k,v])=><input type="hidden" key={k} name={k} value={v}/>)}<input type="hidden" name="scope" value={p.get("scope")||"unfulfilled"}/><nav aria-label="Fulfillment status">{[["all","All"],["unfulfilled","Unfulfilled"],["fulfilled","Fulfilled"],["on_hold","On Hold"]].map(([value,label])=><Link key={value} aria-current={(p.get("scope")||"unfulfilled")===value?"page":undefined} to={href({scope:value,after:null})}>{label}</Link>)}</nav><label>Orders per page <select name="limit" defaultValue={p.get("limit")||"50"}>{[50,100,150,200].map(n=><option key={n}>{n}</option>)}</select></label><label>Search these orders <input name="q" defaultValue={p.get("q")||""} placeholder="Recipient or order number"/></label><button>Apply</button></Form>}
+        {view==="daily" && <DailyHandover key={date+carrier} {...{date,carrier,sandbox,dailyTotals,pickupLists,pickupWarning}}/>}
         {view==="orders" && <details open={!employees.length || undefined}><summary>Add an employee</summary><Form method="post"><label>Employee name <input name="name" required maxLength={100}/></label><button name="intent" value="addEmployee">Add employee</button></Form></details>}
         <Form method="post" key={view + p.toString()}>
           <fieldset disabled={busy}><input type="hidden" name="dailyDate" value={date}/>
@@ -645,7 +671,7 @@ export default function Workspace() {
                           {view !== "orders" && (
                             <>
                               <td>{r.carrier==="Geniki" && r.voucher?<Link to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.id})}>{r.voucher}</Link>:r.voucher||"—"}</td>
-                              <td>{r.status}{view==="daily" && r.voucher && r.status!=="Cancelled" && <div><button type="submit" name="intent" value={"cancel-row:"+r.id} disabled={sandbox&&r.carrier==="ACS"} onClick={e=>{if(!window.confirm("Cancel "+r.carrier+" voucher "+r.voucher+" for "+r.orderName+"? Review its Shopify fulfillment separately."))e.preventDefault()}}>Cancel voucher</button></div>}</td>
+                              <td><span className="shipment-state" data-tone={/cancel|fail|return|problem/i.test(r.status)?"warning":/deliver(ed)?$|closed|complete/i.test(r.status)?"success":"info"}>{r.status}</span>{view==="daily" && r.voucher && r.status!=="Cancelled" && <div><button type="submit" name="intent" value={"cancel-row:"+r.id} disabled={sandbox&&r.carrier==="ACS"} onClick={e=>{if(!window.confirm("Cancel "+r.carrier+" voucher "+r.voucher+" for "+r.orderName+"? Review its Shopify fulfillment separately."))e.preventDefault()}}>Cancel voucher</button></div>}</td>
                             </>
                           )}
                         </tr>
@@ -663,39 +689,6 @@ export default function Workspace() {
             )}
           </fieldset>
         </Form>
-        {view==="daily" && carrier!=="Geniki" && <details><summary>ACS pickup lists</summary>
-      {sandbox?<p>ACS pickup lists are disabled in the test store.</p>:<Form method="post"><input type="hidden" name="dailyDate" value={date}/><button name="intent" value="acsPickup" disabled={busy} onClick={e=>{if(!window.confirm("Issue the ACS pickup list for "+date+"?"))e.preventDefault()}}>Issue ACS pickup list</button></Form>}
-      {pickupWarning&&<p>{pickupWarning}</p>}{pickupLists.map(l=><p key={l.pickupListNo}><a href={l.url} target="_blank" rel="noreferrer">Print ACS list {l.pickupListNo}</a> · {l.listVouchersCount} vouchers</p>)}</details>}
-        {view === "daily" && carrier !== "ACS" && (
-          <details>
-            <summary>Geniki · Finalize daily handover</summary>
-            <Form method="post">
-              <input type="hidden" name="closeDate" value={date} />
-              <p>
-                Geniki closes every pending voucher in the account for {date},
-                including vouchers created outside Courier Label.
-              </p>
-              <label>
-                Environment{" "}
-                {select(
-                  [
-                    ["test", "Test"],
-                    ["live", "Live"],
-                  ],
-                  "test",
-                  "environment",
-                )}
-              </label>
-              <label>
-                Confirm date{" "}
-                <input name="confirm" placeholder={date} required />
-              </label>
-              <button name="intent" value="close" disabled={busy}>
-                Finalize handover
-              </button>
-            </Form>
-          </details>
-        )}
         {result?.messages && (
           <div role="status">
             {result.messages.map((m, i) => (
@@ -706,10 +699,8 @@ export default function Workspace() {
         {result && <PrintDocuments result={result}/>}
       </section>
       <footer>
-        <Link to={href({view:"daily",carrier:"ACS"})}>ACS Daily Labels</Link>
-        <Link to={href({ view: "daily", carrier: "Geniki" })}>
-          Geniki Daily Labels
-        </Link>
+        <Link to={"/app/acs-operations?"+p}>ACS Operations</Link>
+        <Link to={"/app/geniki-operations?"+p}>Geniki Operations</Link>
         <Link to={"/app/vouchers?" + p}>Other couriers · EasyMail</Link>
       </footer>
     </main>
