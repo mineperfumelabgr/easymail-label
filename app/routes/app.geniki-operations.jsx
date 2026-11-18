@@ -13,7 +13,7 @@ import {
   createGenikiParcel,
   replaceGeniki,
 } from "../services/geniki-operations.server";
-import { genikiLive, genikiSandbox } from "../services/geniki.server";
+import { genikiLive, genikiSandbox, isCourierTestShop } from "../services/geniki.server";
 
 const tagStates = ["IN TRANSIT", "DELIVERED", "IN RETURN"];
 export async function loader({ request }) {
@@ -178,6 +178,7 @@ export async function action({ request }) {
       !["test", "live"].includes(environment)
     )
       throw new Error("Invalid shipment request.");
+    if (isCourierTestShop(shop) && environment === "live") throw new Error("Choose Test for this store.");
     const row = await createGenikiParcel(shop, environment, "manual:" + token, {
       ...fields,
       weight,

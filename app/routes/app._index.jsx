@@ -17,7 +17,7 @@ import {
   issue,
   rulesFor,
 } from "../services/courier-workspace.server";
-import { genikiLive, genikiSandbox } from "../services/geniki.server";
+import { genikiLive, genikiSandbox, isCourierTestShop } from "../services/geniki.server";
 import {
   extractPdfBytesFromAcsResponse,
   printAcsVoucher,
@@ -73,7 +73,10 @@ export async function loader({ request }) {
       (o) => o.shippingAddress && !o.cancelledAt,
     );
     const existing = await db.courierShipment.findMany({where:{shop,carrier:"Geniki",orderId:{in:orders.map(o=>o.id)},voucher:{not:null}},select:{id:true,orderId:true,voucher:true}});
-    for(const order of orders)order.label=existing.find(row=>row.orderId===order.id);
+    for(const order of orders){
+      order.label=existing.find(row=>row.orderId===order.id);
+      order.environment=(order.test || isCourierTestShop(shop)) ? "test" : "live";
+    }
     if (data.orders.pageInfo.hasNextPage) next = data.orders.pageInfo.endCursor;
   }
   if (view === "daily" || view === "tracking") {
@@ -180,6 +183,7 @@ export async function action({ request }) {
       return {
         messages: ["Enter the displayed date to confirm finalization."],
       };
+    if (isCourierTestShop(shop) && environment === "live") return {messages:["Choose Test for this store."]};
     const api = environment === "live" ? genikiLive : genikiSandbox;
     try {
       const key = await api.authenticate();

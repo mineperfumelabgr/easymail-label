@@ -5,7 +5,7 @@ import {
   createOrReuseAcsLabel,
   todayYMD,
 } from "./acs-create-label.server";
-import { genikiLive, genikiSandbox } from "./geniki.server";
+import { genikiLive, genikiSandbox, isCourierTestShop } from "./geniki.server";
 
 export const defaults = { GR: "ACS", CY: "Geniki", BG: "Geniki" };
 export async function rulesFor(shop) {
@@ -35,7 +35,8 @@ export async function issue(admin, shop, orderId, carrier, weight) {
   if (!order || order.cancelledAt || !order.shippingAddress)
     throw new Error("Order cannot be shipped");
   const address = order.shippingAddress;
-  const environment = order.test ? "test" : "live";
+  const testShipment = order.test || isCourierTestShop(shop);
+  const environment = testShipment ? "test" : "live";
   const unique = { shop_orderId_environment: { shop, orderId, environment } };
   let row = await db.courierShipment.findUnique({ where: unique });
   if (row?.status === "Superseded") {
@@ -47,12 +48,12 @@ export async function issue(admin, shop, orderId, carrier, weight) {
     throw new Error("Order already assigned to " + row.carrier);
   if (carrier === "Geniki" && order.acs?.value)
     throw new Error("An ACS voucher already exists");
-  if (order.test && carrier === "ACS")
+  if (testShipment && carrier === "ACS")
     throw new Error("ACS is configured for real shipments");
   if (row?.status === "Cancelled")
     throw new Error("Voucher cancelled. Review this order before reissuing.");
   if (row?.voucher && (carrier === "ACS" || row.fulfillmentId)) return row;
-  const api = order.test ? genikiSandbox : genikiLive;
+  const api = testShipment ? genikiSandbox : genikiLive;
   let key;
   if (carrier === "Geniki") key = await api.authenticate();
   const groups = order.fulfillmentOrders.nodes
@@ -184,7 +185,7 @@ export async function issue(admin, shop, orderId, carrier, weight) {
     `mutation($input:FulfillmentInput!){fulfillmentCreate(fulfillment:$input){fulfillment{id} userErrors{message}}}`,
     {
       input: {
-        notifyCustomer: !order.test,
+        notifyCustomer: !testShipment,
         lineItemsByFulfillmentOrder: row.fulfillmentPlan,
         trackingInfo: {
           company: "Geniki Tachydromiki",

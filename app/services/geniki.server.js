@@ -5,6 +5,11 @@ const namespace = "http://voucher.taxydromiki.gr/JobServicesV2.asmx";
 const builder = new XMLBuilder({ ignoreAttributes: false });
 const parser = new XMLParser({ removeNSPrefix: true, parseTagValue: false });
 
+export function isCourierTestShop(shop) {
+  return shop === "mine-perfume-lab-gr-dev.myshopify.com" ||
+    process.env.SHOPIFY_API_KEY === "dd2b3ac472268547c2880beb7b420474";
+}
+
 function client(endpoint, prefix) {
   async function call(method, fields) {
     const body = builder.build({
@@ -54,7 +59,7 @@ function client(endpoint, prefix) {
       !GENIKI_TEST_PASSWORD ||
       !GENIKI_TEST_APP_KEY
     ) {
-      throw new Error("Geniki test credentials are missing");
+      throw new Error(prefix === "GENIKI_TEST_" ? "Geniki sandbox credentials are missing (GENIKI_TEST_USERNAME, GENIKI_TEST_PASSWORD, GENIKI_TEST_APP_KEY)." : "Geniki production credentials are missing.");
     }
     const result = await call("Authenticate", {
       sUsrName: GENIKI_TEST_USERNAME,
