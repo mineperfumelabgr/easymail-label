@@ -58,7 +58,7 @@ export default function AppHome() {
         fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
       }}
     >
-      <h1 style={{ fontSize: 26, marginBottom: 8 }}>Shipping Labels</h1>
+      <h1 style={{ fontSize: 26, marginBottom: 8 }}>Courier Label</h1>
 
       <p style={{ marginTop: 0, color: "#555", marginBottom: 30, fontSize: 15 }}>
         Manage your courier labels directly from Shopify Admin.
@@ -92,6 +92,10 @@ export default function AppHome() {
         </s-link>
         {[["/app/acs-tracking", "ACS Tracking", "Review delivery status, returns and exceptions."], ["/app/acs-tracking-settings", "ACS Tag Settings", "Choose Shopify tags for each ACS shipment status."], ["/app/acs-custom-shipment", "Custom ACS Shipment", "Create an ACS label without a Shopify order."]].map(([href, title, description]) => <s-link key={href} href={`${href}${location.search || ""}`} style={{ ...cardStyle, alignItems: "flex-start", textAlign: "left" }}><div style={{ ...labelWrapStyle, justifyContent: "flex-start", minHeight: 30, marginTop: 0 }}><div style={labelStyle}>{title}</div></div><p style={{ color: "#616161", lineHeight: 1.5 }}>{description}</p></s-link>)}
       </div>
+      <h2>Geniki Tachydromiki</h2>
+      <s-link href={`/app/geniki${location.search}`}>Geniki test environment</s-link>
+      <h2>Other couriers</h2>
+      <s-link href={`/app/vouchers${location.search}`}>EasyMail Daily Labels</s-link>
     </div>
   );
 }
