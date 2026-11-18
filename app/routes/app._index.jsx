@@ -83,8 +83,8 @@ export async function loader({ request }) {
     try {
       response = await adminGraphql(
       admin,
-      `query($after:String){orders(first:50,after:$after,sortKey:CREATED_AT,reverse:true,query:"status:open fulfillment_status:unfulfilled OR fulfillment_status:partial"){pageInfo{endCursor hasNextPage} nodes{id name test tags paymentGatewayNames totalOutstandingSet{shopMoney{amount currencyCode}} shippingAddress{name countryCodeV2} cancelledAt}}}`,
-      { after: p.get("after") },
+      `query($after:String,$filter:String){orders(first:50,after:$after,sortKey:CREATED_AT,reverse:true,query:$filter){pageInfo{endCursor hasNextPage} nodes{id name displayFulfillmentStatus test tags paymentGatewayNames totalOutstandingSet{shopMoney{amount currencyCode}} shippingAddress{name countryCodeV2} cancelledAt}}}`,
+      { after: p.get("scope")==="all"?null:p.get("after"), filter:p.get("scope")==="all"?null:"status:open (fulfillment_status:unfulfilled OR fulfillment_status:partial)" },
     );
     } catch (error) {
       if (!/not approved to access the Order object|protected customer data/i.test(error.message)) throw error;
@@ -93,14 +93,14 @@ export async function loader({ request }) {
     }
     const { data } = response;
     orders = data.orders.nodes.filter(
-      (o) => o.shippingAddress && !o.cancelledAt,
+      (o) => o.shippingAddress && !o.cancelledAt && [o.name,o.shippingAddress.name].some(value=>String(value||"").toLocaleLowerCase().includes((p.get("q")||"").trim().toLocaleLowerCase())),
     );
     const existing = await db.courierShipment.findMany({where:{shop,carrier:"Geniki",orderId:{in:orders.map(o=>o.id)},voucher:{not:null}},select:{id:true,orderId:true,voucher:true}});
     for(const order of orders){
       order.label=existing.find(row=>row.orderId===order.id);
       order.environment=(order.test || isCourierTestShop(shop)) ? "test" : "live";
     }
-    if (data.orders.pageInfo.hasNextPage) next = data.orders.pageInfo.endCursor;
+    if (p.get("scope")!=="all" && data.orders.pageInfo.hasNextPage) next = data.orders.pageInfo.endCursor;
   }
   if (view === "daily" || view === "tracking") {
     const where = {
@@ -462,6 +462,7 @@ export default function Workspace() {
             <button>Filter</button>
           </Form>
         )}
+        {view==="orders" && <Form method="get" key={"order-filter"+p.toString()} className="controls">{[...p].filter(([k])=>!["scope","q","after"].includes(k)).map(([k,v])=><input type="hidden" key={k} name={k} value={v}/>)}<label>Show <select name="scope" defaultValue={p.get("scope")||"open"}><option value="open">Orders to fulfill</option><option value="all">All statuses · latest 50 orders</option></select></label><label>Search these orders <input name="q" defaultValue={p.get("q")||""} placeholder="Recipient or order number"/></label><button>Apply</button></Form>}
         {view==="orders" && <details open={!employees.length || undefined}><summary>Add an employee</summary><Form method="post"><label>Employee name <input name="name" required maxLength={100}/></label><button name="intent" value="addEmployee">Add employee</button></Form></details>}
         <Form method="post" key={view + p.toString()}>
           <fieldset disabled={busy}><input type="hidden" name="dailyDate" value={date}/>
@@ -547,6 +548,7 @@ export default function Workspace() {
                           </td>
                           <td>
                             {r.name || r.orderName}
+                            {view==="orders" && <div><small>{r.displayFulfillmentStatus?.toLowerCase().replaceAll("_"," ")}</small>{r.tags.map(tag=><span key={tag} style={{display:"inline-block",margin:"2px 3px",padding:"1px 6px",border:"1px solid #ccc",borderRadius:8}}>{tag}</span>)}</div>}
                             <div className="recipient">{view==="orders"?r.shippingAddress.name:r.recipientName}</div>{view!=="orders" && <small>{r.addressPreview || "—"}</small>}
                             {r.label && <Link to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.label.id})}> · Existing voucher {r.label.voucher}</Link>}
                             {(r.test || r.environment === "test") && " · Test"}
