@@ -7,6 +7,7 @@ import {
   useNavigation,
   useSearchParams,
 } from "react-router";
+import { applyGenikiTag } from "../services/geniki-operations.server";
 import { PDFDocument } from "pdf-lib";
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
@@ -63,6 +64,8 @@ export async function loader({ request }) {
     orders = data.orders.nodes.filter(
       (o) => o.shippingAddress && !o.cancelledAt,
     );
+    const existing = await db.courierShipment.findMany({where:{shop,carrier:"Geniki",orderId:{in:orders.map(o=>o.id)},voucher:{not:null}},select:{id:true,orderId:true,voucher:true}});
+    for(const order of orders)order.label=existing.find(row=>row.orderId===order.id);
     if (data.orders.pageInfo.hasNextPage) next = data.orders.pageInfo.endCursor;
   }
   if (view === "daily" || view === "tracking") {
@@ -259,9 +262,10 @@ export async function action({ request }) {
           data: { status: "Cancelled" },
         });
       } else if (intent === "refresh") {
-        if (!row.fulfillmentId || row.status === "Cancelled")
+        if (["Cancelled","Superseded","Submitting fulfillment","Label issued"].includes(row.status))
           throw new Error("Shipment not ready for tracking");
         const r = await api.tracking(key, row.voucher);
+        if(r.Status)await applyGenikiTag(admin,row,r.Status);
         await db.courierShipment.update({
           where: { id: row.id },
           data: { status: r.Status || row.status },
@@ -449,6 +453,7 @@ export default function Workspace() {
                           </td>
                           <td>
                             {r.name || r.orderName}
+                            {r.label && <Link to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.label.id})}> · Existing voucher {r.label.voucher}</Link>}
                             {(r.test || r.environment === "test") && " · Test"}
                           </td>
                           <td>
@@ -486,7 +491,7 @@ export default function Workspace() {
                           </td>
                           {view !== "orders" && (
                             <>
-                              <td>{r.voucher || "—"}</td>
+                              <td>{r.carrier==="Geniki" && r.voucher?<Link to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.id})}>{r.voucher}</Link>:r.voucher||"—"}</td>
                               <td>{r.status}</td>
                             </>
                           )}

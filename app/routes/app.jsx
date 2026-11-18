@@ -22,6 +22,7 @@ export default function App() {
         <s-link href="/app/acs-tracking-settings">ACS Tag Settings</s-link>
         <s-link href="/app/acs-custom-shipment">Custom ACS Shipment</s-link>
         <s-link href="/app?view=daily&amp;carrier=Geniki">Geniki Daily Labels</s-link>
+        <s-link href="/app/geniki-operations">Geniki shipments and tags</s-link>
         <s-link href="/app/vouchers">EasyMail Daily Labels</s-link>
         <s-link href="/app/employees">Dipendenti</s-link>
         <s-link href="/app?view=tracking">Courier Tracking</s-link>

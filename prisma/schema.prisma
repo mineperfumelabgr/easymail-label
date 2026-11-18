@@ -148,10 +148,19 @@ model CourierShipment {
   voucher String?
   labels Json?
   checkedAt DateTime?
+  sourceOrderId String?
+  previousId String? @unique
   fulfillmentPlan Json?
   status String @default("Creating")
   fulfillmentId String?
   createdAt DateTime @default(now())
   @@unique([shop, orderId, environment])
   @@index([shop, carrier, createdAt])
+}
+
+model GenikiTagRule {
+  shop String
+  status String
+  tag String
+  @@id([shop,status])
 }

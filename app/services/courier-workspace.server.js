@@ -38,6 +38,11 @@ export async function issue(admin, shop, orderId, carrier, weight) {
   const environment = order.test ? "test" : "live";
   const unique = { shop_orderId_environment: { shop, orderId, environment } };
   let row = await db.courierShipment.findUnique({ where: unique });
+  if (row?.status === "Superseded") {
+    const current = await db.courierShipment.findFirst({where:{shop,sourceOrderId:orderId,environment,carrier:"Geniki",fulfillmentId:{not:null},status:{not:"Superseded"}},orderBy:{createdAt:"desc"}});
+    if (!current) throw new Error("Review voucher history in Daily Labels.");
+    row=current;
+  }
   if (row && row.carrier !== carrier)
     throw new Error("Order already assigned to " + row.carrier);
   if (carrier === "Geniki" && order.acs?.value)

@@ -1,0 +1,174 @@
+import { randomUUID } from "node:crypto";
+import db from "../db.server";
+import { adminGraphql } from "./acs-create-label.server";
+import { genikiLive, genikiSandbox } from "./geniki.server";
+
+
+export async function applyGenikiTag(admin, row, status) {
+  const orderId = row.sourceOrderId || row.orderId;
+  if (!orderId.startsWith("gid://shopify/Order/")) return;
+  const rule = await db.genikiTagRule.findUnique({
+    where: { shop_status: { shop: row.shop, status: status.toUpperCase() } },
+  });
+  if (!rule?.tag) return;
+  const r = await adminGraphql(
+    admin,
+    `mutation($id:ID!,$tags:[String!]!){tagsAdd(id:$id,tags:$tags){userErrors{message}}}`,
+    { id: orderId, tags: [rule.tag] },
+  );
+  if (r.data.tagsAdd.userErrors.length)
+    throw new Error(r.data.tagsAdd.userErrors[0].message);
+}
+
+export async function createGenikiParcel(
+  shop,
+  environment,
+  orderId,
+  fields,
+  extra = {},
+) {
+  const api = environment === "test" ? genikiSandbox : genikiLive,
+    key = await api.authenticate();
+  const where = { shop_orderId_environment: { shop, orderId, environment } };
+  let row = await db.courierShipment.findUnique({ where });
+  if (row?.voucher) return row;
+  let number, jobId;
+  if (row) {
+    const found = await api.lookup(key, row.reference);
+    const job = found.Jobs?.VoucherJob;
+    if (found.Count !== "1" || !job || job.IsCanceled === "true")
+      throw new Error("Previous request requires verification with Geniki.");
+    number = job.Voucher?.VoucherNo;
+    jobId = job.Id;
+  } else {
+    row = await db.courierShipment.create({
+      data: {
+        shop,
+        environment,
+        orderId,
+        orderName: fields.reference,
+        country: fields.country,
+        carrier: "Geniki",
+        reference: randomUUID(),
+        ...extra,
+      },
+    });
+    const result = await api.create(key, {
+      OrderId: row.reference,
+      Name: fields.name,
+      Address: fields.address,
+      CountryIso: fields.country,
+      City: fields.city,
+      Telephone: fields.phone,
+      Zip: fields.zip,
+      Pieces: 1,
+      Weight: fields.weight,
+      Services: fields.cod ? "ΑΜ" : "",
+      CodAmount: fields.cod || 0,
+      InsAmount: 0,
+      ReceivedDate: new Date().toISOString(),
+    });
+    jobId = result.JobId;
+    number = result.Voucher;
+  }
+  if (!number || !jobId) throw new Error("Geniki did not confirm the voucher.");
+  return db.courierShipment.update({
+    where: { id: row.id },
+    data: {
+      jobId: String(jobId),
+      voucher: number,
+      labels: [number],
+      status: extra.previousId ? "Label issued" : "Ready for pickup",
+    },
+  });
+}
+
+export async function replaceGeniki(admin, shop, previousId, weight) {
+  const prior = await db.courierShipment.findFirst({
+    where: { id: previousId, shop, carrier: "Geniki" },
+  });
+  const orderId = prior?.sourceOrderId || prior?.orderId;
+  if (
+    !prior?.voucher ||
+    !prior.fulfillmentId ||
+    !orderId?.startsWith("gid://shopify/Order/")
+  )
+    throw new Error("Choose a Geniki voucher with a Shopify fulfillment.");
+  const { data } = await adminGraphql(
+    admin,
+    `query($id:ID!,$fid:ID!){order(id:$id){name cancelledAt shippingAddress{name address1 address2 city zip phone countryCodeV2} tags paymentGatewayNames totalOutstandingSet{shopMoney{amount currencyCode}}} fulfillment:node(id:$fid){... on Fulfillment{id status trackingInfo{number url}}}}`,
+    { id: orderId, fid: prior.fulfillmentId },
+  );
+  const o = data.order,
+    f = data.fulfillment,
+    a = o?.shippingAddress;
+  if (!a || o.cancelledAt || !f || f.status === "CANCELLED")
+    throw new Error(
+      "Review the order and fulfillment before replacing its label.",
+    );
+  const amount = Number(o.totalOutstandingSet.shopMoney.amount);
+  if (
+    amount &&
+    (!(
+      o.tags.includes("COD") ||
+      o.paymentGatewayNames.some((n) =>
+        /cash on delivery|αντικαταβολ|\bCOD\b/i.test(n),
+      )
+    ) ||
+      a.countryCodeV2 !== "GR" ||
+      o.totalOutstandingSet.shopMoney.currencyCode !== "EUR")
+  )
+    throw new Error("Review outstanding payment.");
+  const row = await createGenikiParcel(
+    shop,
+    prior.environment,
+    "replacement:" + prior.id,
+    {
+      reference: o.name,
+      name: a.name,
+      address: [a.address1, a.address2].filter(Boolean).join(" "),
+      city: a.city,
+      zip: a.zip,
+      country: a.countryCodeV2,
+      phone: a.phone || "",
+      weight,
+      cod: amount,
+    },
+    { previousId: prior.id, sourceOrderId: orderId },
+  );
+  if (row.fulfillmentId) return row;
+  const info = f.trackingInfo.filter(
+    (t) => t.number !== prior.voucher && t.number !== row.voucher,
+  );
+  const numbers = [...info.map((t) => t.number), row.voucher];
+  const urls = [
+    ...info.map((t) => t.url),
+    "https://www.taxydromiki.com/en/track/" + row.voucher,
+  ];
+  const result = await adminGraphql(
+    admin,
+    `mutation($id:ID!,$tracking:FulfillmentTrackingInput!){fulfillmentTrackingInfoUpdate(fulfillmentId:$id,trackingInfoInput:$tracking,notifyCustomer:false){fulfillment{id} userErrors{message}}}`,
+    {
+      id: f.id,
+      tracking: {
+        company: "Geniki Tachydromiki",
+        numbers,
+        ...(urls.every(Boolean) ? { urls } : {}),
+      },
+    },
+  );
+  const updated = result.data.fulfillmentTrackingInfoUpdate;
+  if (!updated.fulfillment)
+    throw new Error(updated.userErrors.map((e) => e.message).join(", "));
+  await db.$transaction([
+    db.courierShipment.update({
+      where: { id: prior.id },
+      data: { status: "Superseded" },
+    }),
+    db.courierShipment.update({
+      where: { id: row.id },
+      data: { fulfillmentId: f.id, status: "Ready for pickup" },
+    }),
+  ]);
+  return row;
+}
