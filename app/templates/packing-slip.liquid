@@ -1,0 +1,565 @@
+<div class="wrapper">
+
+{%- comment -%} LANGUAGE LOGIC {%- endcomment -%}
+{% assign order_country = shipping_address.country_code | default: billing_address.country_code | upcase %}
+
+{% assign t_order = 'Order' %}
+{% assign t_order_word = 'order' %}
+{% assign t_po_number = 'PO number' %}
+{% assign t_tags = 'Tags:' %}
+{% assign t_welcome = 'Thank you for your order ❤️' %}
+{% assign t_first_order = 'Welcome to the Mine Community ❤️' %}
+{% assign t_returning = 'We are happy to have you back ❤️' %}
+{% assign t_vip = 'VIP LOVE ❤️ Thank you for being with us!' %}
+{% assign t_delivery_to = 'Delivery to' %}
+{% assign t_ship_to = 'Ship to' %}
+{% assign t_no_shipping = 'No shipping address' %}
+{% assign t_bill_to = 'Bill to' %}
+{% assign t_no_billing = 'No billing address' %}
+{% assign t_items = 'Items' %}
+{% assign t_quantity = 'Quantity' %}
+{% assign t_part_of = 'Part of:' %}
+{% assign t_other_items = 'There are other items from your order not included in this shipment.' %}
+{% assign t_notes = 'Notes' %}
+{% assign t_delivery_instructions = 'Delivery instructions' %}
+{% assign t_footer_thanks = 'Thank you for choosing us!' %}
+{% assign t_social_text_1 = 'Follow us on Instagram & TikTok:' %}
+{% assign t_social_text_2 = 'Send us a message with subject “follower” and you will receive a' %}
+{% assign t_social_text_3 = 'code for -10%' %}
+{% assign t_social_text_4 = 'for your next order ❤️' %}
+{% assign t_tax_note_1 = 'The receipt is issued automatically and transmitted to AADE at the moment of payment through the provider' %}
+{% assign t_tax_note_2 = 'on the platform' %}
+{% assign t_tax_note_3 = 'The receipt has been sent electronically to the email address used for the order.' %}
+{% assign t_tax_note_4 = 'For more information, write to' %}
+{% assign t_sample_discount = '🎁 YOUR 20% DISCOUNT CODE IS "SAMPLE20%"' %}
+
+{% if order_country == 'GR' or order_country == 'CY' %}
+  {% assign t_order = 'Παραγγελία' %}
+  {% assign t_order_word = 'παραγγελία' %}
+  {% assign t_po_number = 'Αριθμός PO' %}
+  {% assign t_tags = 'Tags:' %}
+  {% assign t_welcome = 'Σε ευχαριστούμε για την παραγγελία σου ❤️' %}
+  {% assign t_first_order = 'Καλωσήρθες στη Mine Community ❤️' %}
+  {% assign t_returning = 'Χαιρόμαστε που επέστρεψες ❤️' %}
+  {% assign t_vip = 'VIP LOVE ❤️ Σε ευχαριστούμε που είσαι μαζί μας!' %}
+  {% assign t_delivery_to = 'Παράδοση σε' %}
+  {% assign t_ship_to = 'Αποστολή σε' %}
+  {% assign t_no_shipping = 'Δεν υπάρχει διεύθυνση αποστολής' %}
+  {% assign t_bill_to = 'Χρέωση σε' %}
+  {% assign t_no_billing = 'Δεν υπάρχει διεύθυνση χρέωσης' %}
+  {% assign t_items = 'Προϊόντα' %}
+  {% assign t_quantity = 'Ποσότητα' %}
+  {% assign t_part_of = 'Μέρος του:' %}
+  {% assign t_other_items = 'Υπάρχουν και άλλα προϊόντα από την παραγγελία σου που δεν περιλαμβάνονται σε αυτή την αποστολή.' %}
+  {% assign t_notes = 'Σημειώσεις' %}
+  {% assign t_delivery_instructions = 'Οδηγίες παράδοσης' %}
+  {% assign t_footer_thanks = 'Σας ευχαριστούμε που μας επιλέξατε!' %}
+  {% assign t_social_text_1 = 'Ακολούθησέ μας σε Instagram & TikTok:' %}
+  {% assign t_social_text_2 = 'Στείλε μας μήνυμα με θέμα «follower» και θα λάβεις' %}
+  {% assign t_social_text_3 = 'κωδικό -10%' %}
+  {% assign t_social_text_4 = 'για την επόμενη παραγγελία σου ❤️' %}
+  {% assign t_tax_note_1 = 'Η απόδειξη εκδίδεται αυτόματα και διαβιβάζεται στην ΑΑΔΕ τη στιγμή της πληρωμής μέσω του παρόχου' %}
+  {% assign t_tax_note_2 = 'στην πλατφόρμα' %}
+  {% assign t_tax_note_3 = 'Η απόδειξη έχει αποσταλεί ηλεκτρονικά στη διεύθυνση email που χρησιμοποιήθηκε για την παραγγελία.' %}
+  {% assign t_tax_note_4 = 'Για περισσότερες πληροφορίες, γράψτε στο' %}
+  {% assign t_sample_discount = '🎁 Ο ΚΩΔΙΚΟΣ ΕΚΠΤΩΣΗΣ ΣΟΥ -20% ΕΙΝΑΙ "SAMPLE20%"' %}
+{% elsif order_country == 'BG' %}
+  {% assign t_order = 'Поръчка' %}
+  {% assign t_order_word = 'поръчка' %}
+  {% assign t_po_number = 'PO номер' %}
+  {% assign t_tags = 'Тагове:' %}
+  {% assign t_welcome = 'Благодарим ти за поръчката ❤️' %}
+  {% assign t_first_order = 'Добре дошъл/дошла в Mine Community ❤️' %}
+  {% assign t_returning = 'Радваме се, че се върна ❤️' %}
+  {% assign t_vip = 'VIP LOVE ❤️ Благодарим ти, че си с нас!' %}
+  {% assign t_delivery_to = 'Доставка до' %}
+  {% assign t_ship_to = 'Изпращане до' %}
+  {% assign t_no_shipping = 'Няма адрес за доставка' %}
+  {% assign t_bill_to = 'Фактуриране до' %}
+  {% assign t_no_billing = 'Няма адрес за фактуриране' %}
+  {% assign t_items = 'Артикули' %}
+  {% assign t_quantity = 'Количество' %}
+  {% assign t_part_of = 'Част от:' %}
+  {% assign t_other_items = 'Има и други артили от поръчката ти, които не са включени в тази пратка.' %}
+  {% assign t_notes = 'Бележки' %}
+  {% assign t_delivery_instructions = 'Инструкции за доставка' %}
+  {% assign t_footer_thanks = 'Благодарим ви, че избрахте нас!' %}
+  {% assign t_social_text_1 = 'Последвай ни в Instagram & TikTok:' %}
+  {% assign t_social_text_2 = 'Изпрати ни съобщение с тема „follower“ и ще получиш' %}
+  {% assign t_social_text_3 = 'код за -10%' %}
+  {% assign t_social_text_4 = 'за следващата си поръчка ❤️' %}
+  {% assign t_tax_note_1 = 'Касовата бележка се издава автоматично и се предава към AADE в момента на плащането чрез доставчика' %}
+  {% assign t_tax_note_2 = 'в платформата' %}
+  {% assign t_tax_note_3 = 'Касовата бележка е изпратена по електронен път на имейл адреса, използван за поръчката.' %}
+  {% assign t_tax_note_4 = 'За повече информация ни пишете на' %}
+  {% assign t_sample_discount = '🎁 ТВОЯТ КОД ЗА ОТСТЪПКА ОТ 20% Е "SAMPLE20%"' %}
+{% endif %}
+
+{%- comment -%} DETECT SAMPLE SET IN SHIPMENT {%- endcomment -%}
+{% assign has_sample_set = false %}
+{% for line_item in line_items_in_shipment %}
+  {% assign line_item_title_downcase = line_item.title | downcase %}
+  {% if line_item_title_downcase contains 'sample set' %}
+    {% assign has_sample_set = true %}
+    {% break %}
+  {% endif %}
+{% endfor %}
+
+{%- comment -%} PAYMENT BADGE CENTRATO IN ALTO {%- endcomment -%}
+{% assign payment_badge = '' %}
+
+{% if order.tags contains 'BANK TRANSFER' %}
+  {% assign payment_badge = 'BANK TRANSFER' %}
+
+{% elsif order.financial_status == 'paid'
+   or order.financial_status == 'partially_paid'
+   or order.financial_status_label == 'Paid'
+   or order.financial_status_label contains 'Paid' %}
+  {% assign payment_badge = 'PAID' %}
+
+{% elsif order.tags contains 'COD' or order.tags contains 'cod' %}
+  {% assign payment_badge = 'COD' %}
+{% endif %}
+
+{% if payment_badge != '' %}
+  <div class="cod-top-wrapper">
+    <div class="cod-top-badge">{{ payment_badge }}</div>
+  </div>
+{% endif %}
+
+  <div class="header">
+    <div class="shop-title">
+      <img src="https://cdn.shopify.com/s/files/1/0900/8234/5308/files/new-logo-mine-1.jpg?v=1749035599" 
+           alt="{{ shop.name }}" 
+           style="width:160px;height:auto;display:block;margin-bottom:0.5em;">
+    </div>
+    <div class="order-title">
+      <p class="text-align-right order-number-bold">{{ t_order }} {{ order.name }}</p>
+
+      {% assign customer_orders = 0 %}
+      {% if order.customer %}
+        {% assign customer_orders = order.customer.orders_count | default: 0 %}
+      {% endif %}
+      {% assign n = customer_orders %}
+      {% assign mod100 = n | modulo: 100 %}
+      {% assign mod10 = n | modulo: 10 %}
+      {% if mod100 >= 11 and mod100 <= 13 %}
+        {% assign suffix = 'th' %}
+      {% elsif mod10 == 1 %}
+        {% assign suffix = 'st' %}
+      {% elsif mod10 == 2 %}
+        {% assign suffix = 'nd' %}
+      {% elsif mod10 == 3 %}
+        {% assign suffix = 'rd' %}
+      {% else %}
+        {% assign suffix = 'th' %}
+      {% endif %}
+      {% if n > 0 %}
+        <p class="text-align-right order-count">{{ n }}{{ suffix }} {{ t_order_word }}</p>
+      {% endif %}
+
+      {% if order.po_number != blank %}
+        <p class="text-align-right">{{ t_po_number }} #{{ order.po_number }}</p>
+      {% endif %}
+      <p class="text-align-right">{{ order.created_at | date: format: "date" }}</p>
+
+      {% if order.tags != blank %}
+        <p class="text-align-right order-tags"><span class="subtitle-bold to-uppercase">{{ t_tags }}</span> {{ order.tags }}</p>
+      {% endif %}
+
+      {% if order.customer %}
+        {% if n <= 1 %}
+          <p class="text-align-right customer-love">{{ t_first_order }}</p>
+        {% elsif n >= 10 %}
+          <p class="text-align-right customer-love">{{ t_vip }}</p>
+        {% elsif n >= 3 %}
+          <p class="text-align-right customer-love">{{ t_returning }}</p>
+        {% else %}
+          <p class="text-align-right customer-love">{{ t_welcome }}</p>
+        {% endif %}
+      {% else %}
+        <p class="text-align-right customer-love">{{ t_welcome }}</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="customer-addresses">
+    <div class="shipping-address">
+      <p class="subtitle-bold to-uppercase">
+        {% if delivery_method.instructions != blank %}{{ t_delivery_to }}{% else %}{{ t_ship_to }}{% endif %}
+      </p>
+      <p class="address-detail">
+        {% if shipping_address != blank %}
+          {{ shipping_address.name }}
+          {% if shipping_address.company != blank %}<br>{{ shipping_address.company }}{% endif %}
+          <br>{{ shipping_address.address1 }}
+          {% if shipping_address.address2 != blank %}<br>{{ shipping_address.address2 }}{% endif %}
+          {% if shipping_address.city_province_zip != blank %}<br>{{ shipping_address.city_province_zip }}{% endif %}
+          <br>{{ shipping_address.country }}
+          {% if shipping_address.phone != blank %}<br>{{ shipping_address.phone }}{% endif %}
+        {% else %}{{ t_no_shipping }}{% endif %}
+      </p>
+    </div>
+    <div class="billing-address">
+      <p class="subtitle-bold to-uppercase">{{ t_bill_to }}</p>
+      <p class="address-detail">
+        {% if billing_address != blank %}
+          {{ billing_address.name }}
+          {% if billing_address.company != blank %}<br>{{ billing_address.company }}{% endif %}
+          <br>{{ billing_address.address1 }}
+          {% if billing_address.address2 != blank %}<br>{{ billing_address.address2 }}{% endif %}
+          {% if billing_address.city_province_zip != blank %}<br>{{ billing_address.city_province_zip }}{% endif %}
+          <br>{{ billing_address.country }}
+        {% else %}{{ t_no_billing }}{% endif %}
+      </p>
+    </div>
+  </div>
+
+  <hr>
+
+  <div class="order-container">
+    <div class="order-container-header">
+      <div class="order-container-header-left-content">
+        <p class="subtitle-bold to-uppercase">{{ t_items }}</p>
+      </div>
+      <div class="order-container-header-right-content">
+        <p class="subtitle-bold to-uppercase">{{ t_quantity }}</p>
+      </div>
+    </div>
+
+    {% assign many_items = line_items_in_shipment.size | plus: 0 %}
+    {% if many_items > 6 %}
+      {% assign show_line_images = false %}
+      {% assign desired_image_size = 0 %}
+    {% else %}
+      {% assign show_line_images = true %}
+      {% assign desired_image_size = 45 %}
+    {% endif %}
+
+    {% assign resolution_adjusted_size = desired_image_size | times: 300 | divided_by: 72 | ceil %}
+    {% capture effective_image_dimensions %}{{ resolution_adjusted_size }}x{{ resolution_adjusted_size }}{% endcapture %}
+
+    {% for line_item in line_items_in_shipment %}
+      {% assign qty_to_print = line_item.shipping_quantity | default: line_item.quantity | plus: 0 %}
+
+      {% assign rows_to_print = qty_to_print %}
+      {% if qty_to_print > 3 %}
+        {% assign rows_to_print = 1 %}
+      {% endif %}
+
+      {% for i in (1..rows_to_print) %}
+        <div class="flex-line-item">
+          <div class="flex-line-item-img">
+            {% if show_line_images and line_item.image != blank %}
+              <div class="aspect-ratio aspect-ratio-square" style="width: {{ desired_image_size }}px; height: {{ desired_image_size }}px;">
+                {{ line_item.image | img_url: effective_image_dimensions | img_tag: '', 'aspect-ratio__content' }}
+              </div>
+            {% endif %}
+          </div>
+
+          <div class="flex-line-item-description">
+            <p>
+              <span class="line-item-description-line">{{ line_item.title }}</span>
+              {% if line_item.variant_title != blank %}<span class="line-item-description-line">{{ line_item.variant_title }}</span>{% endif %}
+              {% if line_item.sku != blank %}<span class="line-item-description-line">{{ line_item.sku }}</span>{% endif %}
+              {% for group in line_item.groups %}
+                <span class="line-item-description-line">{{ t_part_of }} {{ group.title }}</span>
+              {% endfor %}
+
+              {% if line_item.properties != blank %}
+                <span class="line-item-description-line line-item-properties">
+                  {% for p in line_item.properties %}
+                    {% unless p.last == blank or p.first contains '_' %}
+                      <strong>{{ p.first }}:</strong> {{ p.last }}<br>
+                    {% endunless %}
+                  {% endfor %}
+                </span>
+              {% endif %}
+            </p>
+          </div>
+
+          <div class="flex-line-item-quantity">
+            <p class="text-align-right qty-only"{% if qty_to_print > 3 %} style="font-size: 28px; font-weight: 900; white-space: nowrap;"{% endif %}>
+              {% if qty_to_print > 3 %}
+                × {{ qty_to_print }}
+              {% elsif qty_to_print > 1 %}
+                {{ i }}/{{ qty_to_print }}
+              {% else %}
+                1
+              {% endif %}
+            </p>
+          </div>
+        </div>
+      {% endfor %}
+    {% endfor %}
+  </div>
+
+  {% if order.customer and order.customer.orders_count > 1 %}
+    <div class="last-orders-box">
+      <div class="last-orders-title">Last orders, if any</div>
+
+      {% assign shown_orders = 0 %}
+
+      {% for previous_order in order.customer.orders %}
+        {% unless previous_order.name == order.name %}
+          {% if shown_orders < 3 %}
+            <div class="last-order-line">
+              {{ previous_order.name }} —
+              {% for item in previous_order.line_items %}
+                {{ item.title }}{% unless forloop.last %}, {% endunless %}
+              {% endfor %}
+            </div>
+            {% assign shown_orders = shown_orders | plus: 1 %}
+          {% endif %}
+        {% endunless %}
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  {% unless includes_all_line_items_in_order %}
+    <hr class="subdued-separator">
+    <p class="missing-line-items-text">{{ t_other_items }}</p>
+  {% endunless %}
+
+  <hr>
+
+ {% if order.note != blank %}
+  <div class="notes important-note">
+    <p class="important-note-title">
+      ⚠ {{ t_notes }}
+    </p>
+    <p class="important-note-text">
+      {{ order.note }}
+    </p>
+  </div>
+{% endif %}
+
+  {% if delivery_method.instructions != blank %}
+    <div class="notes">
+      <p class="subtitle-bold to-uppercase">{{ t_delivery_instructions }}</p>
+      <p class="notes-details">{{ delivery_method.instructions }}</p>
+    </div>
+  {% endif %}
+
+  {% if has_sample_set %}
+    <div class="sample-set-discount-box">
+      {{ t_sample_discount }}
+    </div>
+  {% endif %}
+
+  <div class="footer footer-flex">
+    <div class="footer-left">
+      <p class="thankyou-bold">{{ t_footer_thanks }}</p>
+      <p>Simone & Valia</p>
+      <p>
+        <strong>{{ shop.name }}</strong><br>
+        {{ shop_address.summary }}<br>
+        +30 2313 03 6282<br>
+        {{ shop.email }}<br>
+        {{ shop.domain }}
+      </p>
+    </div>
+
+    <div class="footer-right">
+      <p class="social-text">
+        {{ t_social_text_1 }} <span class="social-bold">@mineperfumelab.gr</span><br>
+        {{ t_social_text_2 }} <span class="social-bold">{{ t_social_text_3 }}</span> {{ t_social_text_4 }}
+      </p>
+      <div class="social-qrs">
+        <div class="qr-item">
+          <img src="https://cdn.shopify.com/s/files/1/0900/8234/5308/files/instagram_qr.png?v=1756550396" alt="Instagram QR" style="width:120px;height:auto;">
+          <div>Instagram</div>
+        </div>
+        <div class="qr-item">
+          <img src="https://cdn.shopify.com/s/files/1/0900/8234/5308/files/tiktok_qr.png?v=1756550396" alt="TikTok QR" style="width:120px;height:auto;">
+          <div>TikTok</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tax-note-centered">
+    {{ t_tax_note_1 }} <strong>NOVUS CONCEPTUS</strong>, {{ t_tax_note_2 }} <strong>WORKADU</strong>.<br>
+    {{ t_tax_note_3 }}<br>
+    {{ t_tax_note_4 }} <strong>customers@mineperfumelab.gr</strong>.
+  </div>
+</div>
+
+<style type="text/css">
+  body { font-size: 15px; }
+  * { box-sizing: border-box; }
+
+  .wrapper {
+    width: 831px;
+    margin: auto;
+    padding: 2.5em;
+    font-family: "Noto Sans", sans-serif;
+    font-weight: 250;
+  }
+
+  .cod-top-wrapper{
+    text-align:center;
+    margin-bottom: 1.0em;
+  }
+  .cod-top-badge{
+    display:inline-block;
+    padding: 0.40em 1.60em;
+    border: 3px solid #000;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    border-radius: 10px;
+    font-size: 1.45em;
+    line-height: 1;
+  }
+
+  .header { 
+    width: 100%; 
+    display: flex; 
+    flex-direction: row; 
+    align-items: flex-start; 
+    margin-bottom: 0.5em; 
+  }
+  .header p { margin: 0; }
+  .shop-title { flex: 6; }
+  .order-title { flex: 4; }
+
+  .order-number-bold { font-weight: 700 !important; font-size: 1.1em; }
+  .order-count { margin-top: 0.2em; font-size: 0.95em; color: #000; }
+  .order-tags { margin-top: 0.2em; font-size: 0.9em; }
+
+  .customer-love {
+    margin-top: 0.5em;
+    font-weight: 800;
+    font-size: 1.2em;
+    line-height: 1.2;
+  }
+
+  .customer-addresses { width: 100%; display: inline-block; margin: 1.6em 0; }
+  .address-detail { margin: 0.5em 0 0; line-height: 1.45; }
+
+  .subtitle-bold { font-weight: 700; margin: 0; font-size: 0.85em; }
+  .to-uppercase { text-transform: uppercase; }
+  .text-align-right { text-align: right; }
+
+  .shipping-address { float: left; min-width: 18em; max-width: 50%; }
+  .billing-address { padding-left: 20em; min-width: 18em; }
+
+  .order-container { padding: 0 0.5em; }
+  .order-container-header { display: inline-block; width: 100%; margin-top: 1.1em; }
+  .order-container-header-left-content { float: left; }
+  .order-container-header-right-content { float: right; }
+
+  .flex-line-item {
+    display: flex; flex-direction: row; align-items: center;
+    margin: 0.9em 0; page-break-inside: avoid; break-inside: avoid;
+  }
+  .flex-line-item-img { margin-right: 1.0em; min-width: {{ desired_image_size }}px; }
+  .flex-line-item-description { flex: 7; }
+  .line-item-description-line { display: block; }
+  .flex-line-item-description p { margin: 0; line-height: 1.4; }
+  .flex-line-item-quantity { flex: 3; text-wrap: nowrap; }
+
+  .qty-only { font-weight: 800; font-size: 1.05em; }
+
+  .line-item-properties { display:block; margin-top: 0.2em; }
+
+  .last-orders-box {
+    margin: 1.8em 0 1.2em;
+    padding: 0 0.5em;
+    font-size: 0.75em;
+    line-height: 1.35;
+    color: #333;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .last-orders-title {
+    font-weight: 700;
+    text-transform: uppercase;
+    margin-bottom: 0.35em;
+    font-size: 0.9em;
+  }
+
+  .last-order-line {
+    margin-bottom: 0.2em;
+  }
+
+  .subdued-separator { height: 0.07em; border: none; background-color: lightgray; margin: 0; }
+  .missing-line-items-text { margin: 1.0em 0; padding: 0 0.5em; }
+
+  .notes { margin-top: 1.4em; page-break-inside: avoid; break-inside: avoid; }
+  .notes p { margin-bottom: 0; }
+  .notes .notes-details { margin-top: 0.5em; }
+
+  .sample-set-discount-box {
+    margin: 2.0em auto 1.4em;
+    text-align: center;
+    font-weight: 900;
+    font-size: 1.45em;
+    line-height: 1.35;
+    max-width: 90%;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .footer { margin-top: 1.6em; }
+  .thankyou-bold { font-weight: 700 !important; }
+  .footer p { margin: 0 0 0.8em; }
+
+  .footer-flex { display: flex; gap: 24px; align-items: flex-start; }
+  .footer-left { flex: 1 1 50%; line-height: 1.8; }
+  .footer-right { flex: 1 1 50%; }
+
+  .social-text { font-size: 1em; margin: 0 0 0.8em; }
+  .social-bold { font-weight: 700 !important; }
+  .social-qrs { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .qr-item { text-align: center; }
+  .qr-item img { display: block; margin: 0 auto 4px; }
+
+  .tax-note-centered {
+    text-align: center;
+    font-style: italic;
+    margin-top: 2.2em;
+    line-height: 1.5;
+  }
+
+  hr { height: 0.14em; border: none; background-color: black; margin: 0; }
+
+  .aspect-ratio { position: relative; display: block; background: #fafbfc; padding: 0; }
+  .aspect-ratio::before { content: ""; position: absolute; inset: 0; border: 1px solid rgba(195,207,216,0.3); }
+  .aspect-ratio--square { width: 100%; padding-bottom: 100%; }
+  .aspect-ratio__content { position: absolute; max-width: 100%; max-height: 100%; display: block; inset: 0; margin: auto; }
+
+.important-note{
+  margin: 1.6em 0;
+  padding: 10px 14px;
+  border: 2px solid #000;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+.important-note-title{
+  margin: 0 0 6px;
+  font-size: 1.02em;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.important-note-text{
+  margin: 0;
+  font-size: 0.98em;
+  font-weight: 700;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+  
+  @media print {
+    body { font-size: 14px; }
+    .wrapper { padding: 2em; }
+    .qr-item img { width: 110px !important; }
+    .customer-love { font-size: 1.15em; }
+    .cod-top-badge { font-size: 1.35em; }
+    .sample-set-discount-box { font-size: 1.35em; }
+  }
+</style>
