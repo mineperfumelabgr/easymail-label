@@ -5,6 +5,7 @@ import {printAcsPickupList,getAcsPickupLists, extractPickupLists, issueAcsPickup
 import { orderCod } from "../services/order-cod";
 import {fulfillmentScopes, matchesFulfillmentScope, fulfillmentLabel, isPosOrder, orderIdentity, matchesOrderSearch} from "../services/order-display";
 import {withOrderContacts, matchingShopifyOrders, shipmentSearchWhere, enrichShipmentOrders, shopifyOrderSearchFilter} from "../services/shopify-order-details.server";
+import {acsShipmentDate,newestShipmentsFirst} from "../services/shipment-date";
 import {shipmentStatus,trackingStatusFilters,matchesTrackingStatus,trackingStatusWhere} from "../services/shipment-status";
 import {OrderIdentity} from "../components/OrderIdentity";
 import {TrackingNumber} from "../components/TrackingNumber";
@@ -162,7 +163,7 @@ export async function loader({ request }) {
     if (view === "tracking" && carrier !== "Geniki") {
       const matchingSnapshots = await db.acsTrackingSnapshot.findMany({
         where: { shop, AND:[{OR:[{orderSourceName:null},{orderSourceName:{not:"pos"}}]}, shipmentSearchWhere(query,orderIds),trackingStatusWhere(statusFilter,"acs")] },
-        orderBy: { lastCheckedAt: "desc" },
+        orderBy: [{fulfillmentCreatedAt:{sort:"desc",nulls:"last"}},{orderCreatedAt:{sort:"desc",nulls:"last"}},{lastCheckedAt:"desc"}],
         take: 250,
       });
       const byVoucher = new Map(
@@ -193,10 +194,10 @@ export async function loader({ request }) {
             status: s.statusLabel,
             statusCode:s.status,checkpointStatus:s.lastShopifyEventStatus,
             trackingDetailsPurgedAt:s.trackingDetailsPurgedAt,completedAt:s.completedAt,
-            createdAt: s.lastCheckedAt,
+            createdAt: acsShipmentDate(s),
           });
       }
-      rows.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      rows.sort(newestShipmentsFirst);
     }
     if(view==="daily" && carrier!=="Geniki"){
       const seen=new Set(rows.filter(r=>r.carrier==="ACS").map(r=>r.voucher));
