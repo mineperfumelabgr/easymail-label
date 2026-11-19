@@ -5,7 +5,7 @@ import {printAcsPickupList,getAcsPickupLists, extractPickupLists, issueAcsPickup
 import { orderCod } from "../services/order-cod";
 import {fulfillmentScopes, matchesFulfillmentScope, fulfillmentLabel, isPosOrder, orderIdentity, matchesOrderSearch} from "../services/order-display";
 import {withOrderContacts, matchingShopifyOrders, shipmentSearchWhere, enrichShipmentOrders} from "../services/shopify-order-details.server";
-import {shipmentStatus} from "../services/shipment-status";
+import {shipmentStatus,trackingStatusFilters,matchesTrackingStatus,trackingStatusWhere} from "../services/shipment-status";
 import {OrderIdentity} from "../components/OrderIdentity";
 import {DailyHandover} from "../components/DailyHandover";
 import {packingPdf, renderPdf} from "../services/packing-slips.server";
@@ -84,6 +84,7 @@ export async function loader({ request }) {
   let pickupLists=[],pickupWarning="";
   const sandbox=isCourierTestShop(shop);
   const query=String(p.get("q")||"").trim().slice(0,200);
+  const statusFilter=view==="tracking" && Object.hasOwn(trackingStatusFilters,p.get("status")) ? p.get("status") : "";
   let contactAccessLimited=false;
   let next = null;
   if (view === "orders") {
@@ -141,22 +142,31 @@ export async function loader({ request }) {
         lt: new Date(noon + 36 * 3600000),
       };
     }
-    rows = await db.courierShipment.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      ...(view === "tracking" ? { take: 250 } : {}),
-    });
+    const shipmentQuery={where,orderBy:{createdAt:"desc"},...(view==="tracking"?{take:250}:{})};
+    if(statusFilter){
+      // Keep one courier's recent records from pushing the other's older
+      // matching shipments past the result cap.
+      const groups=await Promise.all([
+        carrier!=="ACS"?db.courierShipment.findMany({...shipmentQuery,where:{...where,carrier:"Geniki",AND:[...where.AND,trackingStatusWhere(statusFilter,"geniki")]}}):[],
+        carrier!=="Geniki"?db.courierShipment.findMany({...shipmentQuery,where:{...where,carrier:"ACS"}}):[],
+      ]);
+      rows=groups.flat();
+    }else rows=await db.courierShipment.findMany(shipmentQuery);
     if (view === "daily")
       rows = rows.filter((r) => athensDay(r.createdAt) === date);
     if (view === "tracking" && carrier !== "Geniki") {
-      const snapshots = await db.acsTrackingSnapshot.findMany({
-        where: { shop, AND:[{OR:[{orderSourceName:null},{orderSourceName:{not:"pos"}}]}, shipmentSearchWhere(query,orderIds)] },
+      const matchingSnapshots = await db.acsTrackingSnapshot.findMany({
+        where: { shop, AND:[{OR:[{orderSourceName:null},{orderSourceName:{not:"pos"}}]}, shipmentSearchWhere(query,orderIds),trackingStatusWhere(statusFilter,"acs")] },
         orderBy: { lastCheckedAt: "desc" },
         take: 250,
       });
       const byVoucher = new Map(
         rows.filter((r) => r.carrier === "ACS").map((r) => [r.voucher, r]),
       );
+      // Always reconcile the native ACS rows with their actual state, even
+      // when that state does not match the selected snapshot query.
+      const linked=statusFilter && byVoucher.size ? await db.acsTrackingSnapshot.findMany({where:{shop,voucherNo:{in:[...byVoucher.keys()].filter(Boolean)}}}) : [];
+      const snapshots=[...new Map([...matchingSnapshots,...linked].map(row=>[row.voucherNo,row])).values()];
       for (const s of snapshots) {
         const existing = byVoucher.get(s.voucherNo);
         if (existing) {
@@ -188,6 +198,7 @@ export async function loader({ request }) {
       rows.push(...legacy.filter(r=>!seen.has(r.voucher)));
       if(!sandbox)try{pickupLists=extractPickupLists(await getAcsPickupLists(date)).map(l=>({...l,url:makeAcsPickupListPdfUrl(l.pickupListNo,date)}))}catch(e){pickupWarning=e.message}
     }
+    if(statusFilter) rows=rows.filter(row=>matchesTrackingStatus(row,statusFilter)).slice(0,250);
     const enriched=await enrichShipmentOrders(admin,db,shop,rows,search.orders);
     rows=enriched.rows;
     contactAccessLimited ||= enriched.contactAccessLimited;
@@ -195,7 +206,7 @@ export async function loader({ request }) {
     if(country) rows=rows.filter(r=>r.country===country);
     if(view==="tracking") rows=rows.slice(0,250);
   }
-  return { view, rules, orders, rows, country, carrier, date, employees, next, pickupLists,pickupWarning,sandbox,dailyTotals,shop,contactAccessLimited };
+  return { view, rules, orders, rows, country, carrier, date, employees, next, pickupLists,pickupWarning,sandbox,dailyTotals,shop,contactAccessLimited,statusFilter };
 }
 
 async function labelErrorTag(admin,id,carrier,add){
@@ -484,7 +495,7 @@ function CountryBadge({code}){
   return <span className="country-chip" data-code={code}>{flag && <span aria-hidden="true">{flag}</span>}{countries[code]||code||"—"}</span>;
 }
 export default function Workspace() {
-  const { view, rules, orders, rows, country, carrier, date, next, employees, accessNotice, pickupLists=[],pickupWarning,sandbox,dailyTotals,shop,contactAccessLimited } =
+  const { view, rules, orders, rows, country, carrier, date, next, employees, accessNotice, pickupLists=[],pickupWarning,sandbox,dailyTotals,shop,contactAccessLimited,statusFilter="" } =
       useLoaderData(),
     result = useActionData(),
     busy = useNavigation().state !== "idle";
@@ -536,7 +547,7 @@ export default function Workspace() {
             <Link
               aria-current={view === v ? "page" : undefined}
               key={v}
-              to={href({ view: v, after: null, country: null, carrier: null, q:null })}
+              to={href({ view: v, after: null, country: null, carrier: null, q:null, status:null })}
             >
               <span aria-hidden="true" className="nav-marker"/>{l}
             </Link>
@@ -555,7 +566,7 @@ export default function Workspace() {
           <Form method="get" key={p.toString()} className="controls">
             {[...p]
               .filter(
-                ([k]) => !["country", "carrier", "date", "after", "q"].includes(k),
+                ([k]) => !["country", "carrier", "date", "after", "q", "status"].includes(k),
               )
               .map(([k, v]) => (
                 <input key={k} type="hidden" name={k} value={v} />
@@ -586,8 +597,9 @@ export default function Workspace() {
               </label>
             )}
             {view === "tracking" && <label className="tracking-search">Find a shipment <input type="search" name="q" defaultValue={p.get("q")||""} maxLength={200} placeholder="Customer name, order number or email"/></label>}
+            {view === "tracking" && <label>Shipment status {select(Object.entries(trackingStatusFilters),statusFilter,"status")}</label>}
             <button>Filter</button>
-            {view==="tracking" && p.get("q") && <Link to={href({q:null,after:null})}>Clear search</Link>}
+            {view==="tracking" && (p.get("q")||statusFilter) && <Link to={href({q:null,status:null,after:null})}>Clear search and status</Link>}
           </Form>
         )}
         {view==="tracking" && <><div className="status-legend" aria-label="Shipment status colours">{[["delivered","Delivered"],["returned","Returned"],["problem","Problem"],["transit","In transit"],["waiting","Awaiting pickup"],["picked-up","Picked up"]].map(([tone,label])=><span key={tone} className="shipment-state" data-tone={tone}>{label}</span>)}</div><p className="result-count">{rows.length} shipments · latest 250 matching results{p.get("q")?" · search across saved shipment history":""}</p></>}

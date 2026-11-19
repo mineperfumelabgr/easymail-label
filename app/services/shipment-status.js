@@ -34,6 +34,48 @@ const aliases = {
 };
 const labels = Object.fromEntries(Object.entries(states).map(([code,[label]])=>[label.toUpperCase(),code]));
 
+export const trackingStatusFilters = {
+  "": "All statuses",
+  attention: "Needs attention · problems and returns",
+  problem: "Delivery problems",
+  waiting: "Awaiting pickup",
+  "picked-up": "Picked up by courier",
+  transit: "In transit / out for delivery",
+  delivered: "Delivered",
+  returned: "Returning / returned to sender",
+  cancelled: "Cancelled / replaced vouchers",
+};
+
+function matchesCode(code, filter) {
+  if (!filter) return true;
+  if (filter === "cancelled") return ["CANCELLED","SUPERSEDED"].includes(code);
+  if (["CANCELLED","SUPERSEDED"].includes(code)) return false;
+  if (filter === "attention") return ["problem","returned"].includes(states[code]?.[1]);
+  return states[code]?.[1] === filter;
+}
+
+export function matchesTrackingStatus(row, filter) {
+  return !filter || matchesCode(shipmentStatus(row).code,filter);
+}
+
+// Applied before each database result limit. Native ACS rows are reconciled
+// with their canonical snapshots by the loader before the final display filter.
+export function trackingStatusWhere(filter, source) {
+  if (!filter || !Object.hasOwn(trackingStatusFilters,filter)) return {};
+  const codes=Object.keys(states).filter(code=>matchesCode(code,filter));
+  if (source === "acs") {
+    const alternatives=[{status:{in:codes.filter(code=>code!=="IN_TRANSIT")}}];
+    if (codes.includes("CARRIER_PICKED_UP")) alternatives.push({status:"IN_TRANSIT",lastShopifyEventStatus:"CARRIER_PICKED_UP"});
+    if (codes.includes("IN_TRANSIT")) alternatives.push({status:"IN_TRANSIT",OR:[{lastShopifyEventStatus:null},{lastShopifyEventStatus:{not:"CARRIER_PICKED_UP"}}]});
+    return {OR:alternatives};
+  }
+  const values={...Object.fromEntries(Object.keys(states).map(code=>[code,code])),...aliases,...labels};
+  const alternatives=[{status:{in:Object.keys(values).filter(value=>codes.includes(values[value])),mode:"insensitive"}}];
+  if (filter === "waiting") alternatives.push({status:{contains:"label",mode:"insensitive"}},{status:{contains:"creat",mode:"insensitive"}});
+  if (["problem","attention"].includes(filter)) alternatives.push({NOT:{status:{in:Object.keys(values),mode:"insensitive"}}});
+  return {OR:alternatives};
+}
+
 export function shipmentStatus(row) {
   const raw = String(row.statusCode || row.status || "").trim().toUpperCase();
   let code = states[raw] ? raw : aliases[raw] || labels[raw];

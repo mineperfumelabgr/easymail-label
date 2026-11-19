@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {matchesFulfillmentScope,fulfillmentLabel,matchesOrderSearch,orderIdentity,shopifyAdminLink} from "../app/services/order-display.js";
-import {shipmentStatus} from "../app/services/shipment-status.js";
+import {shipmentStatus,matchesTrackingStatus,trackingStatusWhere} from "../app/services/shipment-status.js";
 
 test("stale search results cannot place fulfilled or cancelled orders in Unfulfilled",()=>{
   for(const displayFulfillmentStatus of ["FULFILLED","FULFILLMENT_NOT_REQUIRED","ON_HOLD","SCHEDULED"])
@@ -54,4 +54,23 @@ test("carrier pickup, transit, delivery problems and terminal returns remain dis
   assert.equal(shipmentStatus({status:"Closed"}).tone,"waiting");
   assert.notEqual(shipmentStatus({status:"Not delivered"}).tone,"delivered");
   assert.equal(shipmentStatus({status:"ACS label generated. Pickup: 2026-11-19"}).tone,"waiting");
+});
+
+test("needs-attention groups actual problems and returns, excluding cancelled and completed shipments",()=>{
+  for(const status of ["DELIVERY_DELAYED","DELIVERY_ATTEMPTED","ACS_REVIEW_REQUIRED","IN RETURN","RETURN TO SENDER"])
+    assert.equal(matchesTrackingStatus({status},"attention"),true,status);
+  for(const status of ["DELIVERED","IN TRANSIT","Cancelled","Superseded"])
+    assert.equal(matchesTrackingStatus({status},"attention"),false,status);
+  assert.equal(matchesTrackingStatus({status:"RETURN TO SENDER"},"problem"),false);
+  assert.equal(matchesTrackingStatus({status:"RETURN TO SENDER"},"returned"),true);
+});
+
+test("picked-up and transit filters use the same ACS checkpoint interpretation as the badge",()=>{
+  const row={carrier:"ACS",statusCode:"IN_TRANSIT",checkpointStatus:"CARRIER_PICKED_UP"};
+  assert.equal(matchesTrackingStatus(row,"picked-up"),true);
+  assert.equal(matchesTrackingStatus(row,"transit"),false);
+  assert.ok(trackingStatusWhere("picked-up","acs").OR.some(x=>x.lastShopifyEventStatus==="CARRIER_PICKED_UP"));
+  assert.ok(trackingStatusWhere("problem","acs").OR[0].status.in.includes("DELIVERY_DELAYED"));
+  assert.ok(trackingStatusWhere("delivered","geniki").OR[0].status.in.includes("DELIVERED"));
+  assert.deepEqual(trackingStatusWhere("invalid","acs"),{});
 });
