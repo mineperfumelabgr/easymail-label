@@ -63,7 +63,7 @@ export function parseCodAmountOverride(param) {
 }
 
 export function todayYMD() {
-  return new Date().toISOString().slice(0, 10);
+  return new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Athens",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
 }
 
 export function parsePickupDate(v) {
@@ -191,14 +191,12 @@ function makeAcsTrackingUrl(number) {
   return `https://webapp.acscourier.net/track-shipment/${number}`;
 }
 
-function buildAcsTrackingPayload(trackingNumbers) {
+export function buildAcsTrackingPayload(trackingNumbers) {
   const numbers = (trackingNumbers || []).filter(Boolean).map(String);
-  const mainNumber = numbers[0] || null;
-
   return {
     company: "ACS Courier",
-    number: mainNumber,
-    url: mainNumber ? makeAcsTrackingUrl(mainNumber) : null,
+    numbers,
+    urls: numbers.map(makeAcsTrackingUrl),
   };
 }
 
@@ -266,17 +264,21 @@ export async function createOrReuseAcsLabel({
   expectedVoucher = null,
   beforeSubmit = () => {},
   pieces = 1,
+  weight = 0.5,
   codOverride = null,
   codAmountOverride = null,
   requestedContentTypeId = 7,
   requestedPickupDate,
+  allowAdditional = false,
+  skipShopifySync = false,
+  onVoucherCreated = async () => {},
 }) {
   if (!process.env.ACS_BILLING_CODE) {
     throw new Error("Missing ACS_BILLING_CODE in environment.");
   }
 
   const geniki = await prisma.courierShipment.findFirst({where:{orderId:orderGid,carrier:"Geniki",status:{not:"Cancelled"}},select:{id:true}});
-  if (geniki) throw new Error("This order has a Geniki shipment. Review it in Courier Label.");
+  if (geniki && !allowAdditional) throw new Error("This order has a Geniki shipment. Review it in Courier Label.");
   const order = await getAcsOrder(admin, orderGid);
   if (!order) {
     throw new Error("Order not found or access denied.");
@@ -398,7 +400,7 @@ const contentTypeId = ["CY", "BG"].includes(country) ? requestedContentTypeId : 
     Charge_Type: 2,
     Cost_Center_Code: null,
     Item_Quantity: Number(pieces),
-    Weight: 0.5,
+    Weight: weight,
     Dimension_X_In_Cm: null,
     Dimension_Y_in_Cm: null,
     Dimension_Z_in_Cm: null,
@@ -446,6 +448,9 @@ if (!masterVoucherNumber) {
   const numbersOrdered = uniq([String(masterVoucherNumber), ...childNumbers]);
   const labels = numbersOrdered.map((n) => ({ number: n, url: makeAcsLabelUrl(n) }));
   const masterLabelUrl = makeAcsLabelUrl(masterVoucherNumber);
+  const issued={voucherNumber:String(masterVoucherNumber),shipmentNumbers:numbersOrdered,pieces,labels,pickupDate:requestedPickupDate};
+  await onVoucherCreated(issued);
+  if(skipShopifySync)return {...issued,success:true,exists:false,message:"ACS voucher created"};
 
   let history = [];
   const historyRaw = safeStr(get(KEY_HISTORY));

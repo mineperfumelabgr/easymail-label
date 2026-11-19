@@ -164,6 +164,16 @@ export async function storeAcsSnapshot({where,create,update}) {
 
 export async function runAcsTrackingSync(admin, shop, selectedOrderIds = null) {
     const orders = [];
+    const storedLabels=await prisma.courierShipment.findMany({where:{shop,carrier:"ACS",environment:"live",voucher:{not:null},trackingDetailsPurgedAt:null},select:{orderId:true,sourceOrderId:true,voucher:true,labels:true,status:true}});
+    const knownNumbers=new Map(),cancelledNumbers=new Set();
+    for(const label of storedLabels){
+      const list=Array.isArray(label.labels)?label.labels:[label.voucher];
+      if(["Cancelled","Superseded"].includes(label.status)){for(const number of list)cancelledNumbers.add(String(number));continue;}
+      const id=label.sourceOrderId||label.orderId;
+      if(!/^gid:\/\/shopify\/Order\/\d+$/.test(id))continue;
+      if(!knownNumbers.has(id))knownNumbers.set(id,new Set());
+      for(const number of list)knownNumbers.get(id).add(String(number));
+    }
     let after = null;
     // Limit each run to the latest 250 orders to keep API calls bounded.
     for (let page = 0; !selectedOrderIds && page < 5; page++) {
@@ -182,7 +192,7 @@ export async function runAcsTrackingSync(admin, shop, selectedOrderIds = null) {
       select: { orderId: true },
       distinct: ["orderId"],
     });
-    const knownOpenOrderIds = knownOpenOrderRows.map((row) => row.orderId).filter(Boolean);
+    const knownOpenOrderIds = [...new Set([...knownOpenOrderRows.map((row) => row.orderId).filter(Boolean),...(!selectedOrderIds?knownNumbers.keys():[])])];
     for (let i = 0; i < knownOpenOrderIds.length; i += 5) {
       const data = await graph(admin, ACTIVE_ORDERS_QUERY, { ids: knownOpenOrderIds.slice(i, i + 5) });
       orders.push(...(data.nodes || []).filter(Boolean));
@@ -208,11 +218,12 @@ export async function runAcsTrackingSync(admin, shop, selectedOrderIds = null) {
     }
     for (const order of orders) {
       if(isPosOrder(order))continue;
+      const isAcs=tracking=>tracking.number&&!cancelledNumbers.has(String(tracking.number))&&(/ACS/i.test(tracking.company||"")||knownNumbers.get(order.id)?.has(String(tracking.number)));
       const acsFulfillments = (order.fulfillments || []).filter((fulfillment) =>
-        fulfillment.status !== "CANCELLED" && (fulfillment.trackingInfo || []).some((tracking) => /ACS/i.test(tracking.company || "") && tracking.number)
+        fulfillment.status !== "CANCELLED" && (fulfillment.trackingInfo || []).some(isAcs)
       );
       let trackingEntries = acsFulfillments.flatMap((fulfillment) =>
-        fulfillment.trackingInfo.filter((tracking) => /ACS/i.test(tracking.company || "") && tracking.number)
+        fulfillment.trackingInfo.filter(isAcs)
           .map((tracking) => ({ fulfillment, number: String(tracking.number) }))
       );
       trackingEntries = [...new Map(trackingEntries.map((entry) => [`${entry.fulfillment.id}:${entry.number}`, entry])).values()];
@@ -223,7 +234,7 @@ export async function runAcsTrackingSync(admin, shop, selectedOrderIds = null) {
         // The order metafield only represents the current label. Use it only when
         // Shopify has no ACS tracking number on any fulfillment to avoid pairing
         // a second parcel's voucher with the first parcel's fulfillment.
-        if (fallbackFulfillment) trackingEntries = [...new Set(fallbackNumbers.filter(Boolean))].map((number) => ({ fulfillment: fallbackFulfillment, number }));
+        if (fallbackFulfillment) trackingEntries = [...new Set(fallbackNumbers.filter(number=>number&&!cancelledNumbers.has(String(number))))].map((number) => ({ fulfillment: fallbackFulfillment, number }));
       }
       if (!trackingEntries.length) continue;
       const orderTags = new Set(order.tags || []);

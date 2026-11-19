@@ -136,6 +136,7 @@ export async function issue(admin, shop, orderId, carrier, weight, options = {})
     if (fresh) {
       const r = await api.create(key, {
         OrderId: row.reference,
+        Comments: ("Order " + order.name).slice(0,40),
         Name: address.name,
         Address: [address.address1, address.address2].filter(Boolean).join(" "),
         CountryIso: address.countryCodeV2,

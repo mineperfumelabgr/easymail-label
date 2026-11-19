@@ -185,3 +185,13 @@
 .courier[data-view="tracking"] :is(th,td):nth-child(2){width:240px;max-width:240px;white-space:normal;overflow-wrap:anywhere}
 .courier[data-view="tracking"] .order-identity>*{min-width:0}
 @media(max-width:760px){.courier .tracking-filters{grid-template-columns:minmax(0,1fr) max-content}.courier .tracking-filters .tracking-search{grid-column:auto}.courier .tracking-filters select{max-width:100%;width:100%;box-sizing:border-box}}
+
+.courier .voucher-action{display:inline-flex;margin-top:7px;padding:7px 11px;border:1px solid #aebfe0;border-radius:7px;font-weight:650;font-size:13px;text-decoration:none;line-height:1.4;white-space:normal}
+.courier .new-voucher-button{background:#e6efff;color:#234c99;border-color:#a8bee5}
+.courier .replace-voucher-button{background:#fff0df;color:#8a4718;border-color:#e5bc91}
+.courier .return-voucher-button{background:#eee8ff;color:#60429a;border-color:#c7b5e7}
+.courier .action-explanation{display:block;max-width:280px;color:#647087;font-size:12px;white-space:normal;margin-top:4px}
+.courier .operation-notice{border:2px solid #29935d;background:#ecfdf3;scroll-margin-top:20px}
+.courier .operation-notice[data-tone=error]{border-color:#d34a4a;background:#fff1f2}
+.courier .voucher-operation-form .controls{align-items:flex-start}.courier .voucher-operation-form label{display:grid;gap:5px;font-weight:600}
+.courier .voucher-operation-form input[type=number]{width:110px}.courier .voucher-operation-form .operation-confirm{display:flex;align-items:center;gap:8px;margin:20px 0}

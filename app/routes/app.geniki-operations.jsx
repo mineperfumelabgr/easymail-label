@@ -13,7 +13,6 @@ import db from "../db.server";
 import { authenticate } from "../shopify.server";
 import {
   createGenikiParcel,
-  replaceGeniki,
 } from "../services/geniki-operations.server";
 import { genikiLive, genikiSandbox, isCourierTestShop } from "../services/geniki.server";
 
@@ -33,6 +32,7 @@ export async function loader({ request }) {
     row,
     rules: Object.fromEntries(rules.map((r) => [r.status, r.tag])),
     token: randomUUID(),
+    section:new URL(request.url).searchParams.get("section"),
   };
 }
 export async function action({ request }) {
@@ -60,7 +60,7 @@ export async function action({ request }) {
           }),
         ),
       );
-      return { message: "Order tag rules saved." };
+      return { ok:true, message: "Order tag rules saved." };
     }
     if (op === "fulfill") {
       const row = await db.courierShipment.findFirstOrThrow({
@@ -70,7 +70,7 @@ export async function action({ request }) {
         throw new Error("Select a Shopify order voucher.");
       const updated = await issue(admin, shop, row.orderId, "Geniki", 1);
       return {
-        message:
+        ok:true, message:
           "Shopify fulfillment and tracking confirmed for " + updated.voucher,
       };
     }
@@ -129,7 +129,7 @@ export async function action({ request }) {
       }
       const pdf = await api.returnPdf(key, serial);
       return {
-        message: "Return coupon " + serial + " ready to print.",
+        ok:true, message: "Return coupon " + serial + " ready to print.",
         documentName:"Geniki return coupon",
         pdf: pdf.toString("base64"),
         number: "return-" + serial,
@@ -144,7 +144,7 @@ export async function action({ request }) {
       const api = row.environment === "test" ? genikiSandbox : genikiLive;
       const pdf = await api.pdf(await api.authenticate(), row.labels || [row.voucher]);
       return {
-        message: "Original label ready.",
+        ok:true, message: "Original label ready.",
         pdf: pdf.toString("base64"),
         number: row.voucher,
       };
@@ -152,10 +152,7 @@ export async function action({ request }) {
     const weight = Number(f.get("weight"));
     if (!Number.isFinite(weight) || weight <= 0)
       throw new Error("Enter a positive packed weight.");
-    if (op === "replace" && f.get("confirm") === "on") {
-      const row = await replaceGeniki(admin, shop, String(f.get("id")), weight);
-      return { message: "Current tracking: " + row.voucher, id: row.id };
-    }
+    if (op === "replace") throw new Error("Use Replace voucher in Daily Labels. No voucher was created.");
     if (op !== "manual") throw new Error("Confirm the new voucher first.");
     const fields = Object.fromEntries(
       ["name", "address", "city", "zip", "country", "phone", "reference"].map(
@@ -187,13 +184,13 @@ export async function action({ request }) {
       weight,
       cod,
     });
-    return { message: "Manual voucher " + row.voucher, id: row.id };
+    return { ok:true, message: "Manual voucher " + row.voucher, id: row.id };
   } catch (e) {
-    return { message: e.message };
+    return { ok:false, message: e.message };
   }
 }
 export default function Operations() {
-  const { row, rules, token } = useLoaderData(),
+  const { row, rules, token, section } = useLoaderData(),
     result = useActionData(),
     busy = useNavigation().state !== "idle";
   return (
@@ -216,8 +213,9 @@ export default function Operations() {
               "gid://shopify/Order/",
             ) &&
             !["Cancelled", "Superseded"].includes(row.status) && (
-              <details>
-                <summary className="action-tile return-action">Customer return</summary>
+              <details id="customer-return" open={section==="return" || undefined}>
+                <summary className="action-tile return-action">Create / print customer return</summary>
+                <p>Generate a return coupon only when requested by the customer. It is not sent automatically and does not replace the original outbound tracking.</p>
                 <Form method="post">
                   <input type="hidden" name="id" value={row.id} />
                   {row.returnSerial ? (
@@ -261,40 +259,12 @@ export default function Operations() {
                 </button>
               </Form>
             )}
-          {row.fulfillmentId && row.status !== "Superseded" && (
-            <details>
-              <summary className="action-tile replacement-action">Issue a replacement voucher</summary>
-              <Form method="post">
-                <input type="hidden" name="id" value={row.id} />
-                <label>
-                  Packed weight (kg){" "}
-                  <input
-                    name="weight"
-                    type="number"
-                    min=".01"
-                    step=".01"
-                    required
-                  />
-                </label>
-                <p>
-                  The previous voucher stays on file and remains active with
-                  Geniki until cancelled separately. The new number replaces it
-                  on the same Shopify fulfillment.
-                </p>
-                <label>
-                  <input type="checkbox" name="confirm" required /> Issue a new
-                  voucher
-                </label>
-                <button disabled={busy} name="op" value="replace">
-                  Generate new label
-                </button>
-              </Form>
-            </details>
-          )}
+
         </section>
       )}
       {result && (
-        <section role="status">
+        <section className="operation-notice" data-tone={result.ok?"success":"error"} role={result.ok?"status":"alert"}>
+          <h2>{result.ok?"Action completed":"Action not completed"}</h2>
           {result.message}{" "}
           {result.pdf && <PrintDocuments result={result}/>}
           {result.id && (

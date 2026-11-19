@@ -33,10 +33,15 @@ export function searchTerm(query) {
   return `"${String(query).replace(/\\/g,"\\\\").replace(/"/g,'\\"')}"`;
 }
 
+export function shopifyOrderSearchFilter(query) {
+  if (!query) return "";
+  const term=searchTerm(query), number=searchTerm(query.replace(/^#/, ""));
+  return `(name:${number} OR email:${term} OR ${term})`;
+}
+
 export async function matchingShopifyOrders(admin, query) {
   if (!query) return {orders:[], contactAccessLimited:false};
-  const term=searchTerm(query), number=searchTerm(query.replace(/^#/, ""));
-  const filter=`-source_name:pos (name:${number} OR email:${term} OR ${term})`;
+  const filter=`-source_name:pos ${shopifyOrderSearchFilter(query)}`;
   const orders=[];
   let after=null, contactAccessLimited=false;
   for (let page=0;page<2;page++) {

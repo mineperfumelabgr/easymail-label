@@ -4,7 +4,7 @@ import {runAcsTrackingSync} from "../services/acs-tracking-sync.server";
 import {printAcsPickupList,getAcsPickupLists, extractPickupLists, issueAcsPickupList, extractIssuePickupListResult, makeAcsPickupListPdfUrl} from "../services/acs.server";
 import { orderCod } from "../services/order-cod";
 import {fulfillmentScopes, matchesFulfillmentScope, fulfillmentLabel, isPosOrder, orderIdentity, matchesOrderSearch} from "../services/order-display";
-import {withOrderContacts, matchingShopifyOrders, shipmentSearchWhere, enrichShipmentOrders} from "../services/shopify-order-details.server";
+import {withOrderContacts, matchingShopifyOrders, shipmentSearchWhere, enrichShipmentOrders, shopifyOrderSearchFilter} from "../services/shopify-order-details.server";
 import {shipmentStatus,trackingStatusFilters,matchesTrackingStatus,trackingStatusWhere} from "../services/shipment-status";
 import {OrderIdentity} from "../components/OrderIdentity";
 import {TrackingNumber} from "../components/TrackingNumber";
@@ -25,7 +25,7 @@ import { syncGenikiFulfillment } from "../services/geniki-operations.server";
 import { PDFDocument } from "pdf-lib";
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
-import { createOrReuseAcsLabel, adminGraphql, parseCodAmountOverride, parsePickupDate } from "../services/acs-create-label.server";
+import { adminGraphql, parseCodAmountOverride, parsePickupDate } from "../services/acs-create-label.server";
 import {
   defaults,
   issue,
@@ -95,7 +95,7 @@ export async function loader({ request }) {
     const limit=Number(p.get("limit"));
     let response;
     try {
-      const filter=["-source_name:pos",scope!=="all"?"-status:cancelled":"",scopes[scope]].filter(Boolean).join(" ");
+      const filter=["-source_name:pos",scope!=="all"?"-status:cancelled":"",scopes[scope],shopifyOrderSearchFilter(query)].filter(Boolean).join(" ");
       const target=[50,100,150,200].includes(limit)?limit:50, collected=[];
       let cursor=p.get("after"),pageInfo={hasNextPage:false};
       const queryFor=fields=>`query($after:String,$filter:String,$limit:Int!){orders(first:$limit,after:$after,sortKey:CREATED_AT,reverse:true,query:$filter){pageInfo{endCursor hasNextPage} nodes{id name sourceName acsVoucher:metafield(namespace:"acs",key:"voucher_number"){value} acsPieces:metafield(namespace:"acs",key:"pieces"){value} acsPickup:metafield(namespace:"acs",key:"pickup_date"){value} displayFulfillmentStatus test tags paymentGatewayNames totalOutstandingSet{shopMoney{amount currencyCode}} ${fields} cancelledAt}}}`;
@@ -119,7 +119,7 @@ export async function loader({ request }) {
     const orderIds=orders.map(o=>o.id);
     const existing=await db.courierShipment.findMany({where:{shop,OR:[{orderId:{in:orderIds}},{sourceOrderId:{in:orderIds}}],voucher:{not:null},status:{notIn:["Cancelled","Superseded"]}},orderBy:{createdAt:"desc"},select:{id:true,orderId:true,sourceOrderId:true,carrier:true,weight:true,pieces:true,preparedBy:true,codAmount:true,voucher:true}});
     for(const order of orders){
-      order.shipment=existing.find(row=>(row.sourceOrderId||row.orderId)===order.id && (row.carrier!=="ACS" || !order.acsVoucher?.value || row.voucher===order.acsVoucher.value));
+      order.shipment=existing.find(row=>(row.sourceOrderId||row.orderId)===order.id);
       order.label=order.shipment?.carrier==="Geniki"?order.shipment:null;
       order.environment=(order.test || isCourierTestShop(shop)) ? "test" : "live";
     }
@@ -313,21 +313,6 @@ export async function action({ request }) {
     try{const r=extractIssuePickupListResult(await issueAcsPickupList(dailyDate));return {messages:[r.pickupListNo?"ACS pickup list "+r.pickupListNo:r.errorMessage||"ACS did not issue a list.",...(r.unprintedVouchers||[])]}}catch(e){return {messages:[e.message]}}
   }
   const messages=[];
-  if(intent?.startsWith("replaceAcs:")){
-    if(isCourierTestShop(shop))return {messages:["ACS live voucher issuance is disabled in this store."]};
-    const id=intent.slice(11), previous=String(f.get("previous-"+id)||"");
-    try {
-      const employee=await db.employee.findFirst({where:{shop,id:String(f.get("employee")||"")}});
-      if(!employee)return {fieldErrors:{employee:"Select the employee in Prepared by before issuing a replacement voucher."},messages:[]};
-      const {data}=await adminGraphql(admin,`query($id:ID!){order(id:$id){sourceName test cancelledAt displayFulfillmentStatus}}`,{id});
-      if(!previous || !data.order || isPosOrder(data.order) || data.order.test || data.order.cancelledAt || data.order.displayFulfillmentStatus!=="FULFILLED")throw new Error("Reload this order before replacement.");
-      const pieces=Number(f.get("replacementPieces-"+id)),raw=String(f.get("replacementCod-"+id)||"").trim(), amount=Number(raw);
-      if(!raw || !Number.isFinite(amount)||amount<0||!Number.isInteger(pieces)||pieces<1||pieces>5)throw new Error("Enter the parcel count and COD amount (0 for prepaid).");
-      const r=await createOrReuseAcsLabel({admin,orderGid:id,forceNew:true,expectedVoucher:previous,pieces,codOverride:amount>0,codAmountOverride:amount,requestedPickupDate:parsePickupDate(f.get("replacementDate-"+id))});
-      await db.courierShipment.updateMany({where:{shop,orderId:id,carrier:"ACS",voucher:previous},data:{voucher:r.voucherNumber,labels:r.shipmentNumbers,pieces,codAmount:amount,preparedBy:employee.name}});
-      return {messages:[r.message],pdf:await labelsPdf([{carrier:"ACS",voucher:r.voucherNumber,orderName:String(f.get("name-"+id)||id)}])};
-    }catch(error){return {messages:[error.message]}}
-  }
   if (!ids.length || ids.length > 50)
     return { messages: ["Select 1–50 rows."] };
 
@@ -379,7 +364,7 @@ export async function action({ request }) {
         if(order?.displayFulfillmentStatus==="FULFILLED"){
           const environment=order.test||isCourierTestShop(shop)?"test":"live";
           let label=await db.courierShipment.findFirst({where:{shop,environment,OR:[{orderId:id},{sourceOrderId:id}],voucher:{not:null},status:{notIn:["Cancelled","Superseded"]}},orderBy:{createdAt:"desc"}});
-          if(order.acs?.value && (!label || label.carrier==="ACS"))label={carrier:"ACS",orderName:order.name,voucher:order.acs.value};
+          if(order.acs?.value && !label)label={carrier:"ACS",orderName:order.name,voucher:order.acs.value};
           if(!label || (label.carrier==="ACS" && environment==="test")){messages.push(order.name+" · No printable label available in this environment.");continue}
           issuedRows.push(label);messages.push(order.name+" · Reprint existing voucher "+label.voucher);continue;
         }
@@ -437,7 +422,7 @@ export async function action({ request }) {
         if(isCourierTestShop(shop))throw new Error("ACS operations are disabled in the test store.");
         if(rowCancel){
           if(row.status==="Cancelled")throw new Error("Voucher already cancelled");
-          const message=await cancelAcsLabel(admin,row.voucher,row.orderId);
+          const message=await cancelAcsLabel(admin,row.voucher,row.sourceOrderId||row.orderId);
           if(row.manualId)await db.acsManualShipment.deleteMany({where:{shop,id:row.manualId}});
           else if(!row.id.startsWith("legacy:"))await db.courierShipment.updateMany({where:{shop,id:row.id},data:{status:"Cancelled"}});
           messages.push(row.orderName+" · "+message);
@@ -519,8 +504,7 @@ export default function Workspace() {
     const form=event.currentTarget;
     const intent=event.nativeEvent.submitter?.value;
     const selected=[...form.querySelectorAll('input[name="selected"]:checked')];
-    const needsEmployee=intent?.startsWith("replaceAcs:") ||
-      (["both","issue"].includes(intent) && selected.some(input=>input.dataset.fulfilled!=="true"));
+    const needsEmployee=(["both","issue"].includes(intent) && selected.some(input=>input.dataset.fulfilled!=="true"));
     if(needsEmployee && !form.elements.namedItem("employee")?.value){
       event.preventDefault();
       setEmployeeWarning("Select the employee in Prepared by before preparing new shipments.");
@@ -605,8 +589,8 @@ export default function Workspace() {
           </Form>
         )}
         {view==="tracking" && <><TrackingStatusChips selected={statusFilter} disabled={busy}/><p className="result-count">{rows.length} shipments · latest 250 matching results{p.get("q")?" · search across saved shipment history":""}</p></>}
-        {view==="orders" && <Form method="get" key={"order-filter"+p.toString()} className="controls">{[...p].filter(([k])=>!["scope","limit","q","after"].includes(k)).map(([k,v])=><input type="hidden" key={k} name={k} value={v}/>)}<input type="hidden" name="scope" value={p.get("scope")||"unfulfilled"}/><nav aria-label="Fulfillment status">{[["all","All"],["unfulfilled","Unfulfilled"],["fulfilled","Fulfilled"],["on_hold","On Hold"]].map(([value,label])=><Link key={value} aria-current={(p.get("scope")||"unfulfilled")===value?"page":undefined} to={href({scope:value,after:null})}>{label}</Link>)}</nav><label>Orders per page <select name="limit" defaultValue={p.get("limit")||"50"}>{[50,100,150,200].map(n=><option key={n}>{n}</option>)}</select></label><label>Search these orders <input name="q" defaultValue={p.get("q")||""} placeholder="Recipient or order number"/></label><button>Apply</button></Form>}
-        {view==="orders" && <p className="result-count">Shopify Point of Sale orders are excluded from every tab.</p>}
+        {view==="orders" && <Form method="get" key={"order-filter"+p.toString()} className="controls">{[...p].filter(([k])=>!["scope","limit","q","after"].includes(k)).map(([k,v])=><input type="hidden" key={k} name={k} value={v}/>)}<input type="hidden" name="scope" value={p.get("scope")||"unfulfilled"}/><nav aria-label="Fulfillment status">{[["all","All"],["unfulfilled","Unfulfilled"],["fulfilled","Fulfilled"],["on_hold","On Hold"]].map(([value,label])=><Link key={value} aria-current={(p.get("scope")||"unfulfilled")===value?"page":undefined} to={href({scope:value,after:null})}>{label}</Link>)}</nav><label>Orders per page <select name="limit" defaultValue={p.get("limit")||"50"}>{[50,100,150,200].map(n=><option key={n}>{n}</option>)}</select></label><label>Search Shopify orders <input name="q" defaultValue={p.get("q")||""} placeholder="Customer name, order number or email"/></label><button>Apply</button></Form>}
+        {view==="orders" && <p className="result-count">Search runs across Shopify order history within the selected status, before the 50–200 result limit. Choose All to include fulfilled orders. Point of Sale orders are excluded.</p>}
         {view==="daily" && <DailyHandover key={date+carrier} {...{date,carrier,sandbox,dailyTotals,pickupLists,pickupWarning}}/>}
         {view==="orders" && <details open={!employees.length || undefined}><summary>Add an employee</summary><Form method="post"><label>Employee name <input name="name" required maxLength={100}/></label><button name="intent" value="addEmployee">Add employee</button></Form></details>}
         {result && <PrintDocuments result={result}/>}
@@ -734,12 +718,8 @@ export default function Workspace() {
                               {r.shipment?.weight!=null && <div>Weight {r.shipment.weight} kg</div>}
                               {r.acsPickup?.value && <div>Pickup {r.acsPickup.value}</div>}
                               {r.shipment?.preparedBy && <div>Prepared by {r.shipment.preparedBy}</div>}
-                              {r.label?<Link to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.label.id})}>Issue a replacement voucher…</Link>:r.acsVoucher?.value && <details><summary>Replace ACS voucher…</summary>
-                      <input type="hidden" name={"previous-"+r.id} value={r.acsVoucher.value}/>
-                      <label>Parcels <input name={"replacementPieces-"+r.id} type="number" min="1" max="5" defaultValue={r.acsPieces?.value||1}/></label>
-                      <label>Pickup <input type="date" name={"replacementDate-"+r.id} defaultValue={date}/></label>
-                      <label>COD (€) <input name={"replacementCod-"+r.id} type="number" step=".01" min="0" defaultValue={r.shipment?.codAmount??""} placeholder="Enter 0 for prepaid"/></label>
-                      <button name="intent" value={"replaceAcs:"+r.id} disabled={sandbox} formNoValidate onClick={e=>{if(!window.confirm("Create a new ACS voucher for "+r.name+"? The previous label may still be active."))e.preventDefault()}}>Issue replacement</button></details>}
+                              <Link className="voucher-action new-voucher-button" to={"/app/shipment-operation?"+new URLSearchParams({...Object.fromEntries([...p].filter(([key])=>["host","shop","embedded"].includes(key))),mode:"new",order:r.id,carrier:r.shipment?.carrier||(r.acsVoucher?.value?"ACS":rules[r.shippingAddress?.countryCodeV2]||"ACS")})}>New voucher</Link>
+                              <small className="action-explanation">Adds a tracking number · keeps previous vouchers</small>
                             </td>:view==="orders"?<td><div className="parcel-controls">
                             <label>Parcels <select name={"pieces-"+r.id} defaultValue="1">{[1,2,3,4,5].map(n=><option key={n}>{n}</option>)}</select></label>
                             {(choices[r.id]||rules[r.shippingAddress?.countryCodeV2])==="Geniki"?<label>Total kg <input type="number" name={"weight-"+r.id} step=".01" min=".01" defaultValue="1"/></label>:<details><summary>ACS options</summary>
@@ -749,7 +729,7 @@ export default function Workspace() {
                             </div></td>:<td>{r.preparedBy||"—"} · {r.pieces||r.labels?.length||"—"}</td>}
                           {view !== "orders" && (
                             <>
-                              <td><TrackingNumber carrier={r.carrier} number={r.voucher}/>{r.carrier==="Geniki" && r.voucher && <Link className="manage-voucher-link" to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.id})}>Manage voucher</Link>}{view==="daily" && r.voucher && r.status!=="Cancelled" && <div><button type="submit" name="intent" value={"cancel-row:"+r.id} disabled={sandbox&&r.carrier==="ACS"} onClick={e=>{if(!window.confirm("Cancel "+r.carrier+" voucher "+r.voucher+" for "+r.orderName+"? Review its Shopify fulfillment separately."))e.preventDefault()}}>Cancel voucher</button></div>}</td>
+                              <td><TrackingNumber carrier={r.carrier} number={r.voucher}/>{r.carrier==="Geniki" && r.voucher && <Link className="manage-voucher-link" to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.id})}>Manage voucher</Link>}{view==="daily" && r.voucher && !["Cancelled","Superseded"].includes(r.status) && /^gid:\/\/shopify\/Order\/\d+$/.test(r.sourceOrderId||r.orderId||"") && <Link className="voucher-action replace-voucher-button" to={"/app/shipment-operation?"+new URLSearchParams({...Object.fromEntries([...p].filter(([key])=>["host","shop","embedded"].includes(key))),mode:"replace",...(r.id.startsWith("legacy:")?{order:r.orderId,voucher:r.voucher,carrier:r.carrier}:{shipment:r.id})})}>Replace voucher</Link>}{view==="tracking" && r.carrier==="Geniki" && r.voucher && !["Cancelled","Superseded"].includes(r.status) && <Link className="voucher-action return-voucher-button" to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.id,section:"return"})+"#customer-return"}>{r.returnSerial?"Print customer return":"Create customer return"}</Link>}{view==="daily" && r.voucher && !["Cancelled","Superseded"].includes(r.status) && <div><button type="submit" name="intent" value={"cancel-row:"+r.id} disabled={sandbox&&r.carrier==="ACS"} onClick={e=>{if(!window.confirm("Cancel "+r.carrier+" voucher "+r.voucher+" for "+r.orderName+"? Review its Shopify fulfillment separately."))e.preventDefault()}}>Cancel voucher</button></div>}</td>
                               <td><span className="shipment-state" data-tone={shipmentStatus(r).tone}>{shipmentStatus(r).label}</span></td>
                             </>
                           )}

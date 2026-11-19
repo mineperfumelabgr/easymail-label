@@ -111,7 +111,7 @@ export const genikiLive = client(
 export async function syncGenikiTracking(db, shop, applyTag) {
   const rows = await db.courierShipment.findMany({
     where: { shop, carrier: "Geniki", environment: "live", genikiTerminalSynced:false, voucher: {not:null},
-      status: {notIn:["Cancelled","Superseded","Creating","Label issued","Submitting fulfillment"]} },
+      status: {notIn:["Cancelled","Superseded","Creating","Label issued","Submitting fulfillment","Label issued · tracking pending"]} },
     orderBy: [{ checkedAt: {sort:"asc", nulls:"first"} }, {createdAt:"asc"}], take: 40,
   });
   if (!rows.length) return {checked:0,errors:0};

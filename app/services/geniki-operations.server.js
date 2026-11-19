@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import db from "../db.server";
 import { adminGraphql } from "./acs-create-label.server";
 import { genikiLive, genikiSandbox, genikiParcelNumbers } from "./geniki.server";
-import {isPosOrder} from "./order-display";
 import {confirmedCompletionDate} from "./tracking-retention";
 
 
@@ -67,6 +66,7 @@ export async function createGenikiParcel(
     });
     const result = await api.create(key, {
       OrderId: row.reference,
+      Comments: ("Order " + fields.reference).slice(0,40),
       Name: fields.name,
       Address: fields.address,
       CountryIso: fields.country,
@@ -94,98 +94,6 @@ export async function createGenikiParcel(
       status: extra.previousId ? "Label issued" : "Ready for pickup",
     },
   });
-}
-
-export async function replaceGeniki(admin, shop, previousId, weight) {
-  const prior = await db.courierShipment.findFirst({
-    where: { id: previousId, shop, carrier: "Geniki" },
-  });
-  const orderId = prior?.sourceOrderId || prior?.orderId;
-  if (
-    !prior?.voucher ||
-    !prior.fulfillmentId ||
-    !orderId?.startsWith("gid://shopify/Order/")
-  )
-    throw new Error("Choose a Geniki voucher with a Shopify fulfillment.");
-  const { data } = await adminGraphql(
-    admin,
-    `query($id:ID!,$fid:ID!){order(id:$id){name sourceName cancelledAt shippingAddress{name address1 address2 city zip phone countryCodeV2} tags paymentGatewayNames totalOutstandingSet{shopMoney{amount currencyCode}}} fulfillment:node(id:$fid){... on Fulfillment{id status trackingInfo{number url}}}}`,
-    { id: orderId, fid: prior.fulfillmentId },
-  );
-  const o = data.order,
-    f = data.fulfillment,
-    a = o?.shippingAddress;
-  if (!a || isPosOrder(o) || o.cancelledAt || !f || f.status === "CANCELLED")
-    throw new Error(
-      "Review the order and fulfillment before replacing its label.",
-    );
-  const amount = prior.codAmount ?? Number(o.totalOutstandingSet.shopMoney.amount);
-  if (
-    prior.codAmount == null && amount &&
-    (!(
-      o.tags.includes("COD") ||
-      o.paymentGatewayNames.some((n) =>
-        /cash on delivery|αντικαταβολ|\bCOD\b/i.test(n),
-      )
-    ) ||
-      a.countryCodeV2 !== "GR" ||
-      o.totalOutstandingSet.shopMoney.currencyCode !== "EUR")
-  )
-    throw new Error("Review outstanding payment.");
-  const row = await createGenikiParcel(
-    shop,
-    prior.environment,
-    "replacement:" + prior.id,
-    {
-      reference: o.name,
-      name: a.name,
-      address: [a.address1, a.address2].filter(Boolean).join(" "),
-      city: a.city,
-      zip: a.zip,
-      country: a.countryCodeV2,
-      phone: a.phone || "",
-      weight,
-      cod: amount,
-    },
-    { previousId: prior.id, sourceOrderId: orderId, preparedBy:prior.preparedBy, pieces:prior.pieces || 1 },
-  );
-  if (row.fulfillmentId) return row;
-  const newNumbers=row.labels || [row.voucher];
-  const replaced=new Set([...(prior.labels || [prior.voucher]), ...newNumbers]);
-  const info = f.trackingInfo.filter(
-    (t) => !replaced.has(t.number),
-  );
-  const numbers = [...info.map((t) => t.number), ...newNumbers];
-  const urls = [
-    ...info.map((t) => t.url),
-    ...newNumbers.map(n=>"https://www.taxydromiki.com/en/track/" + n),
-  ];
-  const result = await adminGraphql(
-    admin,
-    `mutation($id:ID!,$tracking:FulfillmentTrackingInput!){fulfillmentTrackingInfoUpdate(fulfillmentId:$id,trackingInfoInput:$tracking,notifyCustomer:false){fulfillment{id} userErrors{message}}}`,
-    {
-      id: f.id,
-      tracking: {
-        company: "Geniki Tachydromiki",
-        numbers,
-        ...(urls.every(Boolean) ? { urls } : {}),
-      },
-    },
-  );
-  const updated = result.data.fulfillmentTrackingInfoUpdate;
-  if (!updated.fulfillment)
-    throw new Error(updated.userErrors.map((e) => e.message).join(", "));
-  await db.$transaction([
-    db.courierShipment.update({
-      where: { id: prior.id },
-      data: { status: "Superseded" },
-    }),
-    db.courierShipment.update({
-      where: { id: row.id },
-      data: { fulfillmentId: f.id, status: "Ready for pickup" },
-    }),
-  ]);
-  return row;
 }
 
 export async function syncGenikiFulfillment(admin, row, result) {
