@@ -7,6 +7,8 @@ import {
   todayYMD,
 } from "./acs-create-label.server";
 import { genikiLive, genikiSandbox, genikiParcelNumbers, isCourierTestShop } from "./geniki.server";
+import {isPosOrder, orderIdentity} from "./order-display";
+import {withOrderContacts} from "./shopify-order-details.server";
 
 export const defaults = { GR: "ACS", CY: "Geniki", BG: "Geniki" };
 export async function rulesFor(shop) {
@@ -19,12 +21,12 @@ export async function rulesFor(shop) {
 
 export async function issue(admin, shop, orderId, carrier, weight, options = {}) {
   if (!["ACS", "Geniki"].includes(carrier)) throw new Error("Choose a courier");
-  const { data } = await adminGraphql(
+  const { data } = await withOrderContacts(
     admin,
-    `query($id:ID!){order(id:$id){
-    id name test cancelledAt displayFulfillmentStatus tags displayFinancialStatus paymentGatewayNames
+    fields=>`query($id:ID!){order(id:$id){
+    id name sourceName test cancelledAt displayFulfillmentStatus tags displayFinancialStatus paymentGatewayNames
     totalOutstandingSet{shopMoney{amount currencyCode}}
-    shippingAddress{name address1 address2 city zip phone countryCodeV2}
+    ${fields}
     acs:metafield(namespace:"acs",key:"voucher_number"){value}
     fulfillments(first:100){id trackingInfo{number}}
     fulfillmentOrders(first:50){pageInfo{hasNextPage} nodes{id status assignedLocation{location{id}}
@@ -33,6 +35,7 @@ export async function issue(admin, shop, orderId, carrier, weight, options = {})
     { id: orderId },
   );
   const order = data.order;
+  if (isPosOrder(order)) throw new Error("Point of Sale orders are excluded from courier preparation.");
   if (!order || order.cancelledAt || !order.shippingAddress)
     throw new Error("Order cannot be shipped");
   if (order.displayFulfillmentStatus === "FULFILLED") throw new Error("This order is fulfilled. Use the dedicated replacement voucher action.");
@@ -94,6 +97,7 @@ export async function issue(admin, shop, orderId, carrier, weight, options = {})
         environment,
         orderName: order.name,
         country: address.countryCodeV2,
+        ...orderIdentity(order),
         recipientName:address.name,
         addressPreview:[address.address1,address.address2,address.zip,address.city].filter(Boolean).join(", "),
         carrier,

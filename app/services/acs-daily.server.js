@@ -1,5 +1,6 @@
 import {adminGraphql} from "./acs-create-label.server";
 import {makeAcsLabelUrl} from "./acs.server";
+import {isPosOrder} from "./order-display";
 const NS="acs";
 const safeStr=v=>String(v??"");
 async function fetchRecentOrders(admin, maxPages = 5) {
@@ -11,13 +12,14 @@ async function fetchRecentOrders(admin, maxPages = 5) {
   while (hasNextPage && page < maxPages) {
     const q = `#graphql
       query RecentOrders($after: String) {
-        orders(first: 50, after: $after, sortKey: UPDATED_AT, reverse: true) {
+        orders(first: 50, after: $after, sortKey: UPDATED_AT, reverse: true, query: "-source_name:pos") {
           pageInfo { hasNextPage }
           edges {
             cursor
             node {
               id
               name
+              sourceName
               tags
               currentTotalPriceSet { shopMoney { amount currencyCode } }
               shippingAddress {
@@ -68,6 +70,7 @@ export async function dailyAcsLabels(admin, selectedDate){
     const orders = await fetchRecentOrders(admin);
 
     const labels = orders
+      .filter(order=>!isPosOrder(order))
       .map((order) => {
         const mf = metafieldMap(order);
         const pickupDate = safeStr(mf.pickup_date);

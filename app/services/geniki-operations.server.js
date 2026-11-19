@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import db from "../db.server";
 import { adminGraphql } from "./acs-create-label.server";
 import { genikiLive, genikiSandbox, genikiParcelNumbers } from "./geniki.server";
+import {isPosOrder} from "./order-display";
 
 
 export async function applyGenikiTag(admin, row, status) {
@@ -54,6 +55,7 @@ export async function createGenikiParcel(
         orderName: fields.reference,
         country: fields.country,
         recipientName: fields.name,
+        recipientPhone: fields.phone || null,
         addressPreview:[fields.address, fields.zip, fields.city].filter(Boolean).join(', '),
         carrier: "Geniki",
         codAmount:fields.cod || 0,
@@ -106,13 +108,13 @@ export async function replaceGeniki(admin, shop, previousId, weight) {
     throw new Error("Choose a Geniki voucher with a Shopify fulfillment.");
   const { data } = await adminGraphql(
     admin,
-    `query($id:ID!,$fid:ID!){order(id:$id){name cancelledAt shippingAddress{name address1 address2 city zip phone countryCodeV2} tags paymentGatewayNames totalOutstandingSet{shopMoney{amount currencyCode}}} fulfillment:node(id:$fid){... on Fulfillment{id status trackingInfo{number url}}}}`,
+    `query($id:ID!,$fid:ID!){order(id:$id){name sourceName cancelledAt shippingAddress{name address1 address2 city zip phone countryCodeV2} tags paymentGatewayNames totalOutstandingSet{shopMoney{amount currencyCode}}} fulfillment:node(id:$fid){... on Fulfillment{id status trackingInfo{number url}}}}`,
     { id: orderId, fid: prior.fulfillmentId },
   );
   const o = data.order,
     f = data.fulfillment,
     a = o?.shippingAddress;
-  if (!a || o.cancelledAt || !f || f.status === "CANCELLED")
+  if (!a || isPosOrder(o) || o.cancelledAt || !f || f.status === "CANCELLED")
     throw new Error(
       "Review the order and fulfillment before replacing its label.",
     );

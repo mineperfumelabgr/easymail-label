@@ -1,13 +1,15 @@
 import { getAcsTrackingDetails, getAcsTrackingSummary, getAcsTableRows } from "./acs.server.js";
 import prisma from "../db.server.js";
+import {isPosOrder, orderIdentity} from "./order-display";
+import {withOrderContacts} from "./shopify-order-details.server";
 
 const ORDER_QUERY = `#graphql
   query OrdersForAcsTracking($after: String) {
-    orders(first: 50, after: $after, sortKey: CREATED_AT, reverse: true) {
+    orders(first: 50, after: $after, sortKey: CREATED_AT, reverse: true, query: "-source_name:pos") {
       pageInfo { hasNextPage endCursor }
       edges { node {
-          id name createdAt
-        shippingAddress { name }
+          id name sourceName createdAt
+        __ORDER_CONTACT_FIELDS__
         tags
         metafield(namespace: "acs", key: "current_numbers") { value }
         fulfillments(first: 10) {
@@ -23,8 +25,8 @@ const ACTIVE_ORDERS_QUERY = `#graphql
   query ActiveAcsOrdersById($ids: [ID!]!) {
     nodes(ids: $ids) {
       ... on Order {
-        id name createdAt
-        shippingAddress { name }
+        id name sourceName createdAt
+        __ORDER_CONTACT_FIELDS__
         tags
         metafield(namespace: "acs", key: "current_numbers") { value }
         fulfillments(first: 10) {
@@ -61,19 +63,19 @@ export function classifyAcsShipment(summary = {}, lastCheckpointAction = "") {
   const status = Number(summary.shipment_status);
   const reason = normalizeText(summary.non_delivery_reason_code);
   const checkpoint = normalizeText(lastCheckpointAction);
-  if (Number(summary.returned_flag) === 1 && status === 7) return { status: "RETURNED", label: "Restituito al mittente" };
-  if (Number(summary.returned_flag) === 1 || status === 6) return { status: "RETURNING", label: "In restituzione al mittente" };
-  if (status === 4 && Number(summary.delivery_flag) === 1) return { status: "DELIVERED", label: "Consegnato al destinatario" };
-  if (["ΑΔ1", "AD1", "ΑΔ8", "AD8"].includes(reason) || /ΑΝΑΜΟΝΗ ΓΙΑ ΠΑΡΑΛΑΒΗ|READY FOR PICKUP/.test(checkpoint)) return { status: "READY_FOR_PICKUP", label: "Da ritirare presso ACS" };
-  if (["ΠΑ1", "ΠΑ2", "ΠΑ4", "PA1", "PA2", "PA4", "ΔΠ1", "DP1", "ΕΔ1", "ED1"].includes(reason)) return { status: "DELIVERY_DELAYED", label: "Consegna in ritardo o riprogrammata" };
-  if (/ΠΡΟΣ ΠΑΡΑΔΟΣΗ|ΠΡΟΣ ΔΙΑΝΟΜΗ|OUT FOR DELIVERY|ΠΑΡΑΔΟΣΗ ΣΤΟΝ ΠΑΡΑΛΗΠΤΗ/.test(checkpoint)) return { status: "OUT_FOR_DELIVERY", label: "In consegna" };
-  if (status === 3 || ["ΑΣ1", "AS1"].includes(reason)) return { status: "DELIVERY_ATTEMPTED", label: "Tentativo di consegna non riuscito" };
-  if (["ΛΣ1", "LS1", "ΛΣ3", "LS3"].includes(reason)) return { status: "DELIVERY_DELAYED", label: "Verificare indirizzo o destinatario" };
-  if (["ΑΠ1", "AP1", "ΑΠ2", "AP2", "ΑΠ3", "AP3", "ΑΠ4", "AP4"].includes(reason)) return { status: "DELIVERY_ATTEMPTED", label: "Problema rilevato durante la consegna" };
-  if (status === 1) return { status: "DELIVERY_DELAYED", label: "Consegna non completata" };
-  if (status === 2 || status === 5) return { status: "IN_TRANSIT", label: "Spedito / in transito" };
-  if (status === 4) return { status: "IN_TRANSIT", label: "In verifica ACS" };
-  return { status: "UNKNOWN", label: "Stato ACS da verificare" };
+  if (Number(summary.returned_flag) === 1 && status === 7) return { status: "RETURNED", label: "Returned to sender" };
+  if (Number(summary.returned_flag) === 1 || status === 6) return { status: "RETURNING", label: "Returning to sender" };
+  if (status === 4 && Number(summary.delivery_flag) === 1) return { status: "DELIVERED", label: "Delivered" };
+  if (["ΑΔ1", "AD1", "ΑΔ8", "AD8"].includes(reason) || /ΑΝΑΜΟΝΗ ΓΙΑ ΠΑΡΑΛΑΒΗ|READY FOR PICKUP/.test(checkpoint)) return { status: "READY_FOR_PICKUP", label: "Ready for customer pickup" };
+  if (["ΠΑ1", "ΠΑ2", "ΠΑ4", "PA1", "PA2", "PA4", "ΔΠ1", "DP1", "ΕΔ1", "ED1"].includes(reason)) return { status: "DELIVERY_DELAYED", label: "Delivery delayed or rescheduled" };
+  if (/ΠΡΟΣ ΠΑΡΑΔΟΣΗ|ΠΡΟΣ ΔΙΑΝΟΜΗ|OUT FOR DELIVERY|ΠΑΡΑΔΟΣΗ ΣΤΟΝ ΠΑΡΑΛΗΠΤΗ/.test(checkpoint)) return { status: "OUT_FOR_DELIVERY", label: "Out for delivery" };
+  if (status === 3 || ["ΑΣ1", "AS1"].includes(reason)) return { status: "DELIVERY_ATTEMPTED", label: "Delivery attempted" };
+  if (["ΛΣ1", "LS1", "ΛΣ3", "LS3"].includes(reason)) return { status: "DELIVERY_DELAYED", label: "Check address or recipient" };
+  if (["ΑΠ1", "AP1", "ΑΠ2", "AP2", "ΑΠ3", "AP3", "ΑΠ4", "AP4"].includes(reason)) return { status: "DELIVERY_ATTEMPTED", label: "Delivery problem" };
+  if (status === 1) return { status: "DELIVERY_DELAYED", label: "Delivery not completed" };
+  if (status === 2 || status === 5) return { status: "IN_TRANSIT", label: "In transit" };
+  if (status === 4) return { status: "IN_TRANSIT", label: "Under ACS review" };
+  return { status: "UNKNOWN", label: "ACS tracking status to verify" };
 }
 
 export function mapCheckpoint(action = "", summary = {}) {
@@ -131,6 +133,7 @@ export function eventTime(value) {
 }
 
 async function graph(admin, query, variables) {
+  if(query.includes("__ORDER_CONTACT_FIELDS__"))return (await withOrderContacts(admin,fields=>query.replace("__ORDER_CONTACT_FIELDS__",fields),variables)).data;
   const response = await admin.graphql(query, { variables });
   const json = await response.json();
   if (json.errors?.length) throw new Error(json.errors.map((e) => e.message).join("; "));
@@ -192,6 +195,7 @@ export async function runAcsTrackingSync(admin, shop, selectedOrderIds = null) {
       }
     }
     for (const order of orders) {
+      if(isPosOrder(order))continue;
       const acsFulfillments = (order.fulfillments || []).filter((fulfillment) =>
         fulfillment.status !== "CANCELLED" && (fulfillment.trackingInfo || []).some((tracking) => /ACS/i.test(tracking.company || "") && tracking.number)
       );
@@ -231,6 +235,7 @@ export async function runAcsTrackingSync(admin, shop, selectedOrderIds = null) {
             await prisma.acsTrackingSnapshot.update({
               where: { shop_voucherNo: { shop, voucherNo: String(number) } },
               data: {
+                ...orderIdentity(order),
                 orderCreatedAt: order.createdAt ? new Date(order.createdAt) : null,
                 fulfillmentId: fulfillment.id,
                 fulfillmentStatus: fulfillment.displayStatus || fulfillment.status || null,
@@ -244,10 +249,11 @@ export async function runAcsTrackingSync(admin, shop, selectedOrderIds = null) {
             result.skipped++;
             continue;
           }
-          if (oldSnapshot?.status === "RETURNED" && currentEvents.some((event) => event.status === "FAILURE" && /RESTITUITO AL MITTENTE/.test(event.message || ""))) {
+          if (oldSnapshot?.status === "RETURNED" && currentEvents.some((event) => event.status === "FAILURE" && /RESTITUITO AL MITTENTE|RETURN.*TO SENDER/i.test(event.message || ""))) {
             await prisma.acsTrackingSnapshot.update({
               where: { shop_voucherNo: { shop, voucherNo: String(number) } },
               data: {
+                ...orderIdentity(order),
                 orderCreatedAt: order.createdAt ? new Date(order.createdAt) : null,
                 fulfillmentId: fulfillment.id,
                 fulfillmentStatus: fulfillment.displayStatus || fulfillment.status || null,
@@ -267,6 +273,7 @@ export async function runAcsTrackingSync(admin, shop, selectedOrderIds = null) {
             // Old unresolved shipments move to a manual-review state. Do not
             // query ACS or emit Shopify events/tags for an unverified outcome.
             const reviewSnapshot = {
+              ...orderIdentity(order),
               shop, orderId: order.id, orderName: order.name,
               orderCreatedAt: order.createdAt ? new Date(order.createdAt) : oldSnapshot?.orderCreatedAt || null,
               fulfillmentId: fulfillment.id,
@@ -295,6 +302,7 @@ export async function runAcsTrackingSync(admin, shop, selectedOrderIds = null) {
             // Shopify already has an active ACS fulfillment: until ACS has its first
             // scan, this is a newly created label, not a failed delivery or sync error.
             const waitingSnapshot = {
+              ...orderIdentity(order),
               shop, orderId: order.id, orderName: order.name, orderCreatedAt: order.createdAt ? new Date(order.createdAt) : null, fulfillmentId: fulfillment.id,
               fulfillmentStatus: fulfillment.displayStatus || fulfillment.status || null,
               fulfillmentCreatedAt: fulfillment.createdAt ? new Date(fulfillment.createdAt) : null,
@@ -326,6 +334,7 @@ export async function runAcsTrackingSync(admin, shop, selectedOrderIds = null) {
           const lastCheckpoint = [...checkpoints].reverse().find((item) => !/SMS|MESSAG|ΕΙΔΟΠΟΙΗΣ|ΕΚΤΥΠΩΣ|ΕΤΙΚΕΤ|VOUCHER|LABEL/i.test(item.checkpoint_action || ""));
           const classified = classifyAcsShipment(summary, lastCheckpoint?.checkpoint_action || "");
           const snapshot = {
+            ...orderIdentity(order),
             shop,
             orderId: order.id,
             orderName: order.name,

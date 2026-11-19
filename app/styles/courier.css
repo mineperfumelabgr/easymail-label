@@ -148,3 +148,23 @@
 .courier .preparation-warning strong{font-size:17px;margin-bottom:3px}
 .courier select[aria-invalid="true"]{border:2px solid #c27921;background:#fff8ed}
 .courier .print-documents{scroll-margin-top:20px}
+
+.courier .shipment-state{border:1px solid transparent;display:inline-flex;align-items:center;gap:6px;font-size:13px;line-height:1.4}
+.courier .shipment-state::before{content:"";width:7px;height:7px;flex-shrink:0;border-radius:50%;background:currentColor}
+.courier .shipment-state[data-tone="delivered"]{background:#dcfce7;color:#166534;border-color:#86efac}
+.courier .shipment-state[data-tone="returned"]{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
+.courier .shipment-state[data-tone="problem"]{background:#fef3c7;color:#854d0e;border-color:#fcd34d}
+.courier .shipment-state[data-tone="transit"]{background:#dbeafe;color:#1d4ed8;border-color:#93c5fd}
+.courier .shipment-state[data-tone="waiting"]{background:#e5e7eb;color:#374151;border-color:#cbd5e1}
+.courier .shipment-state[data-tone="picked-up"]{background:#cffafe;color:#155e75;border-color:#67e8f9}
+.courier .status-legend{display:flex;flex-wrap:wrap;gap:7px;margin:8px 0 12px}
+.courier .status-legend .shipment-state{font-size:12px;padding:3px 8px}
+.courier .result-count{font-size:13px;color:#52617b;margin:6px 0}
+.courier .order-identity a{color:inherit;text-decoration:none}
+.courier .order-identity a:hover,.courier .order-email a:hover{text-decoration:underline;text-underline-offset:3px}
+.courier .order-email{font-size:13px;line-height:1.5;color:#3b527a;white-space:normal;overflow-wrap:anywhere;max-width:340px}
+.courier .order-email a{color:inherit;text-decoration:none}
+.courier .ship-to{display:block;color:#647087;font-size:12px}
+.courier .tracking-search input{min-width:min(300px,65vw)}
+.courier .contact-access-notice{padding:12px 14px;background:#fff8e6;border:1px solid #ebcc79;border-radius:8px;color:#775715}
+.fulfillment-chip[data-status="CANCELLED"]{background:#fee2e2;color:#991b1b}

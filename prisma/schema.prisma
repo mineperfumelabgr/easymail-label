@@ -70,6 +70,13 @@ model AcsTrackingSnapshot {
   fulfillmentDeliveredAt DateTime?
   voucherNo      String
   recipientName  String?
+  customerId     String?
+  customerName   String?
+  customerEmail  String?
+  orderSourceName String?
+  recipientPhone String?
+  addressPreview String?
+  country        String?
   status         String
   statusLabel    String
   shipmentStatus Int?
@@ -156,6 +163,11 @@ model CourierShipment {
   weight Float?
   codAmount Float?
   recipientName String?
+  customerId String?
+  customerName String?
+  customerEmail String?
+  orderSourceName String?
+  recipientPhone String?
   addressPreview String?
   preparedBy String?
   pieces Int?

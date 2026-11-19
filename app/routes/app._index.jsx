@@ -3,6 +3,10 @@ import {cancelAcsLabel} from "../services/acs-cancellation.server";
 import {runAcsTrackingSync} from "../services/acs-tracking-sync.server";
 import {printAcsPickupList,getAcsPickupLists, extractPickupLists, issueAcsPickupList, extractIssuePickupListResult, makeAcsPickupListPdfUrl} from "../services/acs.server";
 import { orderCod } from "../services/order-cod";
+import {fulfillmentScopes, matchesFulfillmentScope, fulfillmentLabel, isPosOrder, orderIdentity, matchesOrderSearch} from "../services/order-display";
+import {withOrderContacts, matchingShopifyOrders, shipmentSearchWhere, enrichShipmentOrders} from "../services/shopify-order-details.server";
+import {shipmentStatus} from "../services/shipment-status";
+import {OrderIdentity} from "../components/OrderIdentity";
 import {DailyHandover} from "../components/DailyHandover";
 import {packingPdf, renderPdf} from "../services/packing-slips.server";
 import {PrintDocuments} from "../components/PrintDocuments";
@@ -54,15 +58,12 @@ async function legacyDaily(admin,shop,date){
  const labels=await dailyAcsLabels(admin,date);
  const manual=await db.acsManualShipment.findMany({where:{shop,pickupDate:date}});
  return [...labels.map(r=>({id:"legacy:"+r.orderId+":"+r.voucherNumber,orderId:r.orderId,orderName:r.orderName,carrier:"ACS",voucher:r.voucherNumber,pieces:r.pieces,labels:r.shipmentNumbers,recipientName:r.customerName,addressPreview:r.addressPreview,country:r.country,status:"Issued",createdAt:r.createdAt})),
- ...manual.map(r=>({id:"manual:"+r.id,manualId:r.id,orderName:r.reference||"Manual shipment",carrier:"ACS",voucher:r.voucherNo,labels:JSON.parse(r.shipmentNumbers),recipientName:r.recipientName,addressPreview:[r.address,r.zip,r.city].filter(Boolean).join(", "),country:r.countryCode,status:"Issued",createdAt:r.createdAt}))];
+ ...manual.map(r=>({id:"manual:"+r.id,manualId:r.id,orderName:r.reference||"Manual shipment",carrier:"ACS",voucher:r.voucherNo,labels:JSON.parse(r.shipmentNumbers),recipientName:r.recipientName,recipientPhone:r.phone,customerEmail:r.email,addressPreview:[r.address,r.zip,r.city].filter(Boolean).join(", "),country:r.countryCode,status:"Issued",createdAt:r.createdAt}))];
 }
-async function addAddresses(admin, rows){
- const ids=[...new Set(rows.filter(r=>!r.recipientName||!r.addressPreview).map(r=>r.sourceOrderId||r.orderId).filter(id=>id?.startsWith("gid://shopify/Order/")))];
- for(let i=0;i<ids.length;i+=100){
- const {data}=await adminGraphql(admin,`query($ids:[ID!]!){nodes(ids:$ids){... on Order{id shippingAddress{name address1 address2 zip city countryCodeV2}}}}`,{ids:ids.slice(i,i+100)});
- const byId=new Map(data.nodes.filter(Boolean).map(o=>[o.id,o.shippingAddress]));
- for(const r of rows){const a=byId.get(r.sourceOrderId||r.orderId);if(a){r.recipientName ||= a.name;r.addressPreview ||= [a.address1,a.address2,a.zip,a.city].filter(Boolean).join(", ");r.country ||= a.countryCodeV2;}}
- }
+async function addAddresses(admin, rows, shop){
+ const result=await enrichShipmentOrders(admin,db,shop,rows);
+ rows.splice(0,rows.length,...result.rows);
+ return result;
 }
 
 export async function loader({ request }) {
@@ -82,30 +83,36 @@ export async function loader({ request }) {
   let dailyTotals={ACS:0,Geniki:0};
   let pickupLists=[],pickupWarning="";
   const sandbox=isCourierTestShop(shop);
+  const query=String(p.get("q")||"").trim().slice(0,200);
+  let contactAccessLimited=false;
   let next = null;
   if (view === "orders") {
-    const scopes = {all:null,unfulfilled:"fulfillment_status:unfulfilled",fulfilled:"fulfillment_status:fulfilled",on_hold:"fulfillment_status:on_hold"};
+    const scopes = fulfillmentScopes;
     const scope=Object.hasOwn(scopes,p.get("scope"))?p.get("scope"):"unfulfilled";
     const limit=Number(p.get("limit"));
     let response;
     try {
-      const query=`query($after:String,$filter:String,$limit:Int!){orders(first:$limit,after:$after,sortKey:CREATED_AT,reverse:true,query:$filter){pageInfo{endCursor hasNextPage} nodes{id name acsVoucher:metafield(namespace:"acs",key:"voucher_number"){value} acsPieces:metafield(namespace:"acs",key:"pieces"){value} acsPickup:metafield(namespace:"acs",key:"pickup_date"){value} displayFulfillmentStatus test tags paymentGatewayNames totalOutstandingSet{shopMoney{amount currencyCode}} shippingAddress{name countryCodeV2} cancelledAt}}}`;
-      const variables={after:p.get("after"),filter:scopes[scope],limit:[50,100,150,200].includes(limit)?limit:50};
-      try {
-        response=await adminGraphql(admin,query.replace("shippingAddress{name","shippingAddress{phone name"),variables);
-      } catch(error) {
-        if(!/phone|protected customer data|access denied/i.test(error.message))throw error;
-        response=await adminGraphql(admin,query,variables);
+      const filter=["-source_name:pos",scope!=="all"?"-status:cancelled":"",scopes[scope]].filter(Boolean).join(" ");
+      const target=[50,100,150,200].includes(limit)?limit:50, collected=[];
+      let cursor=p.get("after"),pageInfo={hasNextPage:false};
+      const queryFor=fields=>`query($after:String,$filter:String,$limit:Int!){orders(first:$limit,after:$after,sortKey:CREATED_AT,reverse:true,query:$filter){pageInfo{endCursor hasNextPage} nodes{id name sourceName acsVoucher:metafield(namespace:"acs",key:"voucher_number"){value} acsPieces:metafield(namespace:"acs",key:"pieces"){value} acsPickup:metafield(namespace:"acs",key:"pickup_date"){value} displayFulfillmentStatus test tags paymentGatewayNames totalOutstandingSet{shopMoney{amount currencyCode}} ${fields} cancelledAt}}}`;
+      for(let page=0;page<8 && collected.length<target;page++){
+        const batch=await withOrderContacts(admin,queryFor,{after:cursor,filter,limit:Math.min(50,target-collected.length)});
+        contactAccessLimited ||= batch.contactAccessLimited;
+        collected.push(...batch.data.orders.nodes.filter(order=>matchesFulfillmentScope(order,scope)));
+        pageInfo=batch.data.orders.pageInfo;
+        if(!pageInfo.hasNextPage || pageInfo.endCursor===cursor)break;
+        cursor=pageInfo.endCursor;
       }
+      response={data:{orders:{nodes:collected,pageInfo}}};
     } catch (error) {
       if (!/not approved to access the Order object|protected customer data/i.test(error.message)) throw error;
-      return { view, rules, orders, rows, country, carrier, date, employees, next,
+      return { view, rules, orders, rows, country, carrier, date, employees, next, shop,
         accessNotice: "Shopify has restricted order access. In the Dev Dashboard, open this app’s Settings → Access requests → Protected customer data. Enable access, save, and reload this page." };
     }
     const { data } = response;
-    orders = data.orders.nodes.filter(
-      (o) => [o.name,o.shippingAddress?.name].some(value=>String(value||"").toLocaleLowerCase().includes((p.get("q")||"").trim().toLocaleLowerCase())),
-    );
+    orders = data.orders.nodes.map(order=>({...order,...orderIdentity(order)}))
+      .filter(order=>matchesFulfillmentScope(order,scope) && matchesOrderSearch(order,query));
     const orderIds=orders.map(o=>o.id);
     const existing=await db.courierShipment.findMany({where:{shop,OR:[{orderId:{in:orderIds}},{sourceOrderId:{in:orderIds}}],voucher:{not:null},status:{notIn:["Cancelled","Superseded"]}},orderBy:{createdAt:"desc"},select:{id:true,orderId:true,sourceOrderId:true,carrier:true,weight:true,pieces:true,preparedBy:true,codAmount:true,voucher:true}});
     for(const order of orders){
@@ -116,8 +123,12 @@ export async function loader({ request }) {
     if (data.orders.pageInfo.hasNextPage) next = data.orders.pageInfo.endCursor;
   }
   if (view === "daily" || view === "tracking") {
+    const search=view==="tracking" ? await matchingShopifyOrders(admin,query) : {orders:[]};
+    contactAccessLimited ||= search.contactAccessLimited;
+    const orderIds=search.orders.map(order=>order.id);
     const where = {
       shop,
+      AND:[{OR:[{orderSourceName:null},{orderSourceName:{not:"pos"}}]}, ...(view==="tracking"?[shipmentSearchWhere(query,orderIds,true)]:[])],
       ...(country && view!=="daily" ? { country } : {}),
       ...(carrier ? { carrier } : {}),
     };
@@ -139,7 +150,7 @@ export async function loader({ request }) {
       rows = rows.filter((r) => athensDay(r.createdAt) === date);
     if (view === "tracking" && carrier !== "Geniki") {
       const snapshots = await db.acsTrackingSnapshot.findMany({
-        where: { shop },
+        where: { shop, AND:[{OR:[{orderSourceName:null},{orderSourceName:{not:"pos"}}]}, shipmentSearchWhere(query,orderIds)] },
         orderBy: { lastCheckedAt: "desc" },
         take: 250,
       });
@@ -149,18 +160,23 @@ export async function loader({ request }) {
       for (const s of snapshots) {
         const existing = byVoucher.get(s.voucherNo);
         if (existing) {
-          if(existing.status!=="Cancelled")existing.status = s.statusLabel;
+          if(!["Cancelled","Superseded"].includes(existing.status)) {
+            existing.statusCode=s.status;
+            existing.checkpointStatus=s.lastShopifyEventStatus;
+          }
+          for(const field of ["customerId","customerName","customerEmail","recipientName","recipientPhone","addressPreview","country","orderSourceName"])existing[field] ||= s[field];
           continue;
         }
-        const dest = "";
         rows.push({
             id: "snapshot:"+s.id,
             orderId:s.orderId,recipientName:s.recipientName,
+            customerId:s.customerId,customerName:s.customerName,customerEmail:s.customerEmail,recipientPhone:s.recipientPhone,addressPreview:s.addressPreview,orderSourceName:s.orderSourceName,
             orderName: s.orderName,
-            country: dest,
+            country: s.country,
             carrier: "ACS",
             voucher: s.voucherNo,
             status: s.statusLabel,
+            statusCode:s.status,checkpointStatus:s.lastShopifyEventStatus,
             createdAt: s.lastCheckedAt,
           });
       }
@@ -172,11 +188,14 @@ export async function loader({ request }) {
       rows.push(...legacy.filter(r=>!seen.has(r.voucher)));
       if(!sandbox)try{pickupLists=extractPickupLists(await getAcsPickupLists(date)).map(l=>({...l,url:makeAcsPickupListPdfUrl(l.pickupListNo,date)}))}catch(e){pickupWarning=e.message}
     }
-    await addAddresses(admin,rows);
+    const enriched=await enrichShipmentOrders(admin,db,shop,rows,search.orders);
+    rows=enriched.rows;
+    contactAccessLimited ||= enriched.contactAccessLimited;
     if(view==="daily")for(const row of rows)if(activeLabel(row) && (row.carrier!=="Geniki" || row.environment===(sandbox?"test":"live")))dailyTotals[row.carrier]++;
     if(country) rows=rows.filter(r=>r.country===country);
+    if(view==="tracking") rows=rows.slice(0,250);
   }
-  return { view, rules, orders, rows, country, carrier, date, employees, next, pickupLists,pickupWarning,sandbox,dailyTotals };
+  return { view, rules, orders, rows, country, carrier, date, employees, next, pickupLists,pickupWarning,sandbox,dailyTotals,shop,contactAccessLimited };
 }
 
 async function labelErrorTag(admin,id,carrier,add){
@@ -235,7 +254,7 @@ export async function action({ request }) {
       const found=await db.courierShipment.findMany({where:{shop,carrier:"Geniki",environment,createdAt:{gte:new Date(noon-36*3600000),lt:new Date(noon+36*3600000)}},orderBy:{createdAt:"asc"}});
       const rows=found.filter(r=>athensDay(r.createdAt)===date && activeLabel(r));
       if(!rows.length)throw new Error("No active Geniki shipments for this date.");
-      await addAddresses(admin,rows);
+      await addAddresses(admin,rows,shop);
       return {pdf:await renderPdf("scripts/geniki-handover.py",{date,environment,rows:rows.map(r=>[r.orderName,r.voucher,r.recipientName,r.country,String(r.pieces||r.labels?.length||1)])}),documentName:"Geniki handover list"};
     }catch(error){return {messages:[error.message]}}
   }
@@ -286,8 +305,8 @@ export async function action({ request }) {
     try {
       const employee=await db.employee.findFirst({where:{shop,id:String(f.get("employee")||"")}});
       if(!employee)return {fieldErrors:{employee:"Select the employee in Prepared by before issuing a replacement voucher."},messages:[]};
-      const {data}=await adminGraphql(admin,`query($id:ID!){order(id:$id){test cancelledAt displayFulfillmentStatus}}`,{id});
-      if(!previous || !data.order || data.order.test || data.order.cancelledAt || data.order.displayFulfillmentStatus!=="FULFILLED")throw new Error("Reload this order before replacement.");
+      const {data}=await adminGraphql(admin,`query($id:ID!){order(id:$id){sourceName test cancelledAt displayFulfillmentStatus}}`,{id});
+      if(!previous || !data.order || isPosOrder(data.order) || data.order.test || data.order.cancelledAt || data.order.displayFulfillmentStatus!=="FULFILLED")throw new Error("Reload this order before replacement.");
       const pieces=Number(f.get("replacementPieces-"+id)),raw=String(f.get("replacementCod-"+id)||"").trim(), amount=Number(raw);
       if(!raw || !Number.isFinite(amount)||amount<0||!Number.isInteger(pieces)||pieces<1||pieces>5)throw new Error("Enter the parcel count and COD amount (0 for prepaid).");
       const r=await createOrReuseAcsLabel({admin,orderGid:id,forceNew:true,expectedVoucher:previous,pieces,codOverride:amount>0,codAmountOverride:amount,requestedPickupDate:parsePickupDate(f.get("replacementDate-"+id))});
@@ -332,7 +351,7 @@ export async function action({ request }) {
   }
   if (intent === "issue" || intent==="both") {
     const employee=await db.employee.findFirst({where:{shop,id:String(f.get("employee")||"")},select:{name:true}});
-    const {data:selection}=await adminGraphql(admin,`query($ids:[ID!]!){nodes(ids:$ids){... on Order{id name test displayFulfillmentStatus acs:metafield(namespace:"acs",key:"voucher_number"){value}}}}`,{ids});
+    const {data:selection}=await adminGraphql(admin,`query($ids:[ID!]!){nodes(ids:$ids){... on Order{id name sourceName test displayFulfillmentStatus acs:metafield(namespace:"acs",key:"voucher_number"){value}}}}`,{ids});
     const selected=new Map(selection.nodes.filter(Boolean).map(order=>[order.id,order]));
     if (!employee && ids.some(id=>selected.get(id)?.displayFulfillmentStatus!=="FULFILLED")) return {fieldErrors:{employee:"Select the employee in Prepared by before preparing new shipments."},messages:[]};
     let packing=null;
@@ -342,6 +361,7 @@ export async function action({ request }) {
     for (const id of ids) {
       try {
         const order=selected.get(id);
+        if(isPosOrder(order))throw new Error("Point of Sale orders are excluded from courier preparation.");
         if(order?.displayFulfillmentStatus==="FULFILLED"){
           const environment=order.test||isCourierTestShop(shop)?"test":"live";
           let label=await db.courierShipment.findFirst({where:{shop,environment,OR:[{orderId:id},{sourceOrderId:id}],voucher:{not:null},status:{notIn:["Cancelled","Superseded"]}},orderBy:{createdAt:"desc"}});
@@ -464,7 +484,7 @@ function CountryBadge({code}){
   return <span className="country-chip" data-code={code}>{flag && <span aria-hidden="true">{flag}</span>}{countries[code]||code||"—"}</span>;
 }
 export default function Workspace() {
-  const { view, rules, orders, rows, country, carrier, date, next, employees, accessNotice, pickupLists=[],pickupWarning,sandbox,dailyTotals } =
+  const { view, rules, orders, rows, country, carrier, date, next, employees, accessNotice, pickupLists=[],pickupWarning,sandbox,dailyTotals,shop,contactAccessLimited } =
       useLoaderData(),
     result = useActionData(),
     busy = useNavigation().state !== "idle";
@@ -516,7 +536,7 @@ export default function Workspace() {
             <Link
               aria-current={view === v ? "page" : undefined}
               key={v}
-              to={href({ view: v, after: null, country: null, carrier: null })}
+              to={href({ view: v, after: null, country: null, carrier: null, q:null })}
             >
               <span aria-hidden="true" className="nav-marker"/>{l}
             </Link>
@@ -525,6 +545,7 @@ export default function Workspace() {
       </header>
       <section>
         {accessNotice && <p role="alert">{accessNotice}</p>}
+        {contactAccessLimited && <p className="contact-access-notice" role="status">Some customer contact details are restricted by Shopify. Approve the required customer data fields in the app’s access settings to display and search email addresses.</p>}
         <h2>
           {view === "daily" && carrier === "Geniki"
             ? "Geniki Daily Labels"
@@ -534,7 +555,7 @@ export default function Workspace() {
           <Form method="get" key={p.toString()} className="controls">
             {[...p]
               .filter(
-                ([k]) => !["country", "carrier", "date", "after"].includes(k),
+                ([k]) => !["country", "carrier", "date", "after", "q"].includes(k),
               )
               .map(([k, v]) => (
                 <input key={k} type="hidden" name={k} value={v} />
@@ -564,10 +585,14 @@ export default function Workspace() {
                 Date <input type="date" name="date" defaultValue={date} />
               </label>
             )}
+            {view === "tracking" && <label className="tracking-search">Find a shipment <input type="search" name="q" defaultValue={p.get("q")||""} maxLength={200} placeholder="Customer name, order number or email"/></label>}
             <button>Filter</button>
+            {view==="tracking" && p.get("q") && <Link to={href({q:null,after:null})}>Clear search</Link>}
           </Form>
         )}
+        {view==="tracking" && <><div className="status-legend" aria-label="Shipment status colours">{[["delivered","Delivered"],["returned","Returned"],["problem","Problem"],["transit","In transit"],["waiting","Awaiting pickup"],["picked-up","Picked up"]].map(([tone,label])=><span key={tone} className="shipment-state" data-tone={tone}>{label}</span>)}</div><p className="result-count">{rows.length} shipments · latest 250 matching results{p.get("q")?" · search across saved shipment history":""}</p></>}
         {view==="orders" && <Form method="get" key={"order-filter"+p.toString()} className="controls">{[...p].filter(([k])=>!["scope","limit","q","after"].includes(k)).map(([k,v])=><input type="hidden" key={k} name={k} value={v}/>)}<input type="hidden" name="scope" value={p.get("scope")||"unfulfilled"}/><nav aria-label="Fulfillment status">{[["all","All"],["unfulfilled","Unfulfilled"],["fulfilled","Fulfilled"],["on_hold","On Hold"]].map(([value,label])=><Link key={value} aria-current={(p.get("scope")||"unfulfilled")===value?"page":undefined} to={href({scope:value,after:null})}>{label}</Link>)}</nav><label>Orders per page <select name="limit" defaultValue={p.get("limit")||"50"}>{[50,100,150,200].map(n=><option key={n}>{n}</option>)}</select></label><label>Search these orders <input name="q" defaultValue={p.get("q")||""} placeholder="Recipient or order number"/></label><button>Apply</button></Form>}
+        {view==="orders" && <p className="result-count">Shopify Point of Sale orders are excluded from every tab.</p>}
         {view==="daily" && <DailyHandover key={date+carrier} {...{date,carrier,sandbox,dailyTotals,pickupLists,pickupWarning}}/>}
         {view==="orders" && <details open={!employees.length || undefined}><summary>Add an employee</summary><Form method="post"><label>Employee name <input name="name" required maxLength={100}/></label><button name="intent" value="addEmployee">Add employee</button></Form></details>}
         {result && <PrintDocuments result={result}/>}
@@ -654,10 +679,9 @@ export default function Workspace() {
                             />
                           </td>
                           <td>
-                            <div className="order-identity"><strong>{r.name || r.orderName}</strong><span>{r.shippingAddress?.name||r.recipientName}</span></div>
+                            <OrderIdentity row={r} shop={shop}/>
                             <input type="hidden" name={"name-"+r.id} value={r.name||r.orderName}/>
-                            {r.shippingAddress?.phone && <a className="order-phone" href={"tel:"+r.shippingAddress.phone.replace(/[^+0-9]/g,"")}>{r.shippingAddress.phone}</a>}
-                            {view==="orders" && <div className="order-tags"><span className="fulfillment-chip" data-status={r.displayFulfillmentStatus}>{r.displayFulfillmentStatus?.toLowerCase().replaceAll("_"," ")}</span>{r.tags.map(tag=><span key={tag} className="order-tag" data-tone={/error|return/i.test(tag)?"red":/cod/i.test(tag)?"gold":/pre.?order/i.test(tag)?"blue":"purple"}>{tag}</span>)}</div>}
+                            {view==="orders" && <div className="order-tags"><span className="fulfillment-chip" data-status={r.cancelledAt?"CANCELLED":r.displayFulfillmentStatus}>{fulfillmentLabel(r)}</span>{r.tags.map(tag=><span key={tag} className="order-tag" data-tone={/error|return/i.test(tag)?"red":/cod/i.test(tag)?"gold":/pre.?order/i.test(tag)?"blue":"purple"}>{tag}</span>)}</div>}
                             {view!=="orders" && <small>{r.addressPreview || "—"}</small>}
                             {r.label && <Link to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.label.id})}> · Existing voucher {r.label.voucher}</Link>}
                             {(r.test || r.environment === "test") && " · Test"}
@@ -712,7 +736,7 @@ export default function Workspace() {
                           {view !== "orders" && (
                             <>
                               <td>{r.carrier==="Geniki" && r.voucher?<Link to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.id})}>{r.voucher}</Link>:r.voucher||"—"}{view==="daily" && r.voucher && r.status!=="Cancelled" && <div><button type="submit" name="intent" value={"cancel-row:"+r.id} disabled={sandbox&&r.carrier==="ACS"} onClick={e=>{if(!window.confirm("Cancel "+r.carrier+" voucher "+r.voucher+" for "+r.orderName+"? Review its Shopify fulfillment separately."))e.preventDefault()}}>Cancel voucher</button></div>}</td>
-                              <td><span className="shipment-state" data-tone={/cancel|fail|return|problem/i.test(r.status)?"warning":/deliver(ed)?$|closed|complete/i.test(r.status)?"success":"info"}>{r.status}</span></td>
+                              <td><span className="shipment-state" data-tone={shipmentStatus(r).tone}>{shipmentStatus(r).label}</span></td>
                             </>
                           )}
                         </tr>
