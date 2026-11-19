@@ -1,4 +1,4 @@
-import {spawn} from "node:child_process";
+import {shippingDocument} from "./shipping-documents.server";
 import {adminGraphql} from "./acs-create-label.server";
 
 export async function packingPdf(admin, ids) {
@@ -19,14 +19,6 @@ export async function packingPdf(admin, ids) {
 }
 
 export function renderPdf(script,payload){
-  return new Promise((resolve,reject)=>{
-    const child=spawn("python3",[script]);
-    const chunks=[];
-    child.stdout.on("data",chunk=>chunks.push(chunk));
-    child.stderr.resume();
-    child.on("error",reject);
-    child.stdin.on("error",reject);
-    child.on("close",code=>code===0?resolve(Buffer.concat(chunks).toString("base64")):reject(new Error("PDF generation failed")));
-    child.stdin.end(JSON.stringify(payload));
-  });
+  const kinds={"scripts/packing-slips.py":"packing","scripts/geniki-handover.py":"handover"};
+  return shippingDocument(kinds[script],payload);
 }
