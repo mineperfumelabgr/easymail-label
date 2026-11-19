@@ -6,7 +6,7 @@ import {
   createOrReuseAcsLabel,
   todayYMD,
 } from "./acs-create-label.server";
-import { genikiLive, genikiSandbox, genikiParcelNumbers, isCourierTestShop } from "./geniki.server";
+import { genikiLive, genikiSandbox, genikiParcelNumbers, isCourierTestShop,genikiJobFromLookup } from "./geniki.server";
 import {isPosOrder, orderIdentity} from "./order-display";
 import {withOrderContacts} from "./shopify-order-details.server";
 
@@ -155,8 +155,8 @@ export async function issue(admin, shop, orderId, carrier, weight, options = {})
       subVouchers = r.SubVouchers?.Record;
     } else {
       const r = await api.lookup(key, row.reference);
-      const job = r.Jobs?.VoucherJob;
-      if (r.Count !== "1" || !job || job.IsCanceled === "true")
+      const job = genikiJobFromLookup(r,row.reference);
+      if (!job)
         throw new Error(
           "Verify the previous request with Geniki before reissuing",
         );

@@ -108,6 +108,14 @@ export const genikiLive = client(
   "GENIKI_LIVE_",
 );
 
+export function genikiJobFromLookup(result,reference,voucher=null){
+  // Production can report Count=0 while returning one actual VoucherJob.
+  // Trust only one concrete job matching our reference (and voucher if known).
+  const jobs=[result?.Jobs?.VoucherJob].flat().filter(Boolean);
+  const job=jobs.length===1?jobs[0]:null;
+  return job?.Id&&job.OrderId===reference&&job.IsCanceled==="false"&&(!voucher||job.Voucher?.VoucherNo===voucher)?job:null;
+}
+
 export async function readGenikiTracking(api,key,row) {
   try{return await api.tracking(key,row.voucher);}
   catch(error){
@@ -115,8 +123,8 @@ export async function readGenikiTracking(api,key,row) {
     // A newly issued, unfinalized job can exist before the tracking register.
     // Confirm the exact voucher on our own open job; never mask an unknown,
     // closed, cancelled, or mismatched job as a successful tracking response.
-    const found=await api.lookup(key,row.reference).catch(()=>null),job=found?.Jobs?.VoucherJob;
-    if(found?.Count!=="1"||job?.Voucher?.VoucherNo!==row.voucher||job.IsClosed!=="false"||job.IsCanceled!=="false")throw error;
+    const found=await api.lookup(key,row.reference).catch(()=>null),job=genikiJobFromLookup(found,row.reference,row.voucher);
+    if(!job||job.IsClosed!=="false")throw error;
     return {Status:"Ready for pickup",AwaitingRegistration:true};
   }
 }

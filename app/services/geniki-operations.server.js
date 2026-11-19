@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import db from "../db.server";
 import { adminGraphql } from "./acs-create-label.server";
-import { genikiLive, genikiSandbox, genikiParcelNumbers } from "./geniki.server";
+import { genikiLive, genikiSandbox, genikiParcelNumbers,genikiJobFromLookup } from "./geniki.server";
 import {confirmedCompletionDate} from "./tracking-retention";
 
 
@@ -40,8 +40,8 @@ export async function createGenikiParcel(
   let number, jobId, records;
   if (row) {
     const found = await api.lookup(key, row.reference);
-    const job = found.Jobs?.VoucherJob;
-    if (found.Count !== "1" || !job || job.IsCanceled === "true")
+    const job = genikiJobFromLookup(found,row.reference);
+    if (!job)
       throw new Error("Previous request requires verification with Geniki.");
     number = job.Voucher?.VoucherNo;
     jobId = job.Id;

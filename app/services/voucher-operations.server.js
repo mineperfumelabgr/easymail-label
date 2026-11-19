@@ -2,7 +2,7 @@ import {randomUUID} from "node:crypto";
 import db from "../db.server";
 import {adminGraphql,createOrReuseAcsLabel,todayYMD} from "./acs-create-label.server";
 import {deleteAcsVoucher} from "./acs.server";
-import {genikiLive,genikiSandbox,genikiParcelNumbers,isCourierTestShop} from "./geniki.server";
+import {genikiLive,genikiSandbox,genikiParcelNumbers,isCourierTestShop,genikiJobFromLookup} from "./geniki.server";
 import {withOrderContacts} from "./shopify-order-details.server";
 import {isPosOrder,orderIdentity} from "./order-display";
 import {collectionAmount} from "./order-cod";
@@ -68,8 +68,8 @@ export async function finishVoucherTracking(admin,shop,id){
   if(row.carrier==="Geniki"&&numbers(row).length<(row.pieces||1)){
     const api=row.environment==="test"?genikiSandbox:genikiLive;
     const found=await api.lookup(await api.authenticate(),row.reference);
-    const job=found.Jobs?.VoucherJob;
-    if(found.Count!=="1"||!job||job.IsCanceled==="true")throw new Error("Verify the existing Geniki voucher before syncing tracking.");
+    const job=genikiJobFromLookup(found,row.reference,row.voucher);
+    if(!job)throw new Error("Verify the existing Geniki voucher before syncing tracking.");
     row=await db.courierShipment.update({where:{id:row.id},data:{labels:genikiParcelNumbers(row.voucher,job.SubVouchers?.Record,row.pieces)}});
   }
   return db.$transaction(async tx=>{

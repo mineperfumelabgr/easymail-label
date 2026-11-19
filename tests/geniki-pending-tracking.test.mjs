@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {readGenikiTracking} from "../app/services/geniki.server.js";
+import {readGenikiTracking,genikiJobFromLookup} from "../app/services/geniki.server.js";
 
 const row={voucher:"123",reference:"our-reference",status:"Ready for pickup"};
 const notRegistered=()=>Object.assign(new Error("Geniki tracking result 9"),{genikiCode:"9"});
-const job={Count:"1",Jobs:{VoucherJob:{Voucher:{VoucherNo:"123"},IsClosed:"false",IsCanceled:"false"}}};
+const job={Count:"0",Jobs:{VoucherJob:{Id:"12",OrderId:row.reference,Voucher:{VoucherNo:"123"},IsClosed:"false",IsCanceled:"false"}}};
 test("tracking code 9 is pending only when the exact voucher exists on our open Geniki job",async()=>{
   let lookups=0;
   const api={tracking:async()=>{throw notRegistered();},lookup:async(key,reference)=>{lookups++;assert.equal(reference,row.reference);return job;}};
@@ -23,4 +23,10 @@ test("other errors and previously moving shipments cannot be treated as newly is
 test("valid carrier tracking is returned without a job lookup",async()=>{
   const result={Status:"IN TRANSIT"};
   assert.equal(await readGenikiTracking({tracking:async()=>result,lookup:async()=>{throw new Error("Unexpected lookup");}},"test-key",row),result);
+});
+test("job lookup uses actual unique jobs and exact references instead of an incorrect Count field",()=>{
+  assert.equal(genikiJobFromLookup(job,row.reference,row.voucher),job.Jobs.VoucherJob);
+  assert.equal(genikiJobFromLookup(job,"another-reference",row.voucher),null);
+  assert.equal(genikiJobFromLookup({...job,Count:"1",Jobs:{}},row.reference),null);
+  assert.equal(genikiJobFromLookup({...job,Jobs:{VoucherJob:[job.Jobs.VoucherJob,job.Jobs.VoucherJob]}},row.reference),null);
 });

@@ -35,6 +35,9 @@ For a newly issued Geniki voucher, tracking result 9 is treated as awaiting
 registration only after GetJobsFromOrderId confirms the exact voucher on our own
 open, uncancelled job. Unknown, closed, cancelled and mismatched jobs remain
 errors. No delivery or Shopify fulfillment event is inferred from this fallback.
+Production lookup responses can report Count=0 while containing a concrete job.
+Lookup/recovery therefore requires exactly one returned job with a matching
+OrderId, job ID and uncancelled flag, plus an exact voucher match when known.
 
 Tracking offers **Create customer return** / **Print customer return** for Geniki
 shipments. This opens the existing customer-requested return coupon flow and never
