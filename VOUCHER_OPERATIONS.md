@@ -31,6 +31,11 @@ by tracking sync even on mixed-carrier fulfillments or older orders. Cancelled
 stored vouchers are excluded from polling. Geniki waits for the pending Shopify
 tracking update before scheduled tracking sync.
 
+For a newly issued Geniki voucher, tracking result 9 is treated as awaiting
+registration only after GetJobsFromOrderId confirms the exact voucher on our own
+open, uncancelled job. Unknown, closed, cancelled and mismatched jobs remain
+errors. No delivery or Shopify fulfillment event is inferred from this fallback.
+
 Tracking offers **Create customer return** / **Print customer return** for Geniki
 shipments. This opens the existing customer-requested return coupon flow and never
 emails the coupon automatically. Geniki must enable its RR permission for the

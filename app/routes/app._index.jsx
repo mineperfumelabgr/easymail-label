@@ -31,7 +31,7 @@ import {
   issue,
   rulesFor,
 } from "../services/courier-workspace.server";
-import { genikiLive, genikiSandbox, isCourierTestShop } from "../services/geniki.server";
+import { genikiLive, genikiSandbox, isCourierTestShop, readGenikiTracking } from "../services/geniki.server";
 import {
   extractPdfBytesFromAcsResponse,
   printAcsVoucher,
@@ -449,7 +449,7 @@ export async function action({ request }) {
       } else if (intent === "refresh") {
         if (["Cancelled","Superseded","Submitting fulfillment","Label issued"].includes(row.status))
           throw new Error("Shipment not ready for tracking");
-        const r = await api.tracking(key, row.voucher);
+        const r = await readGenikiTracking(api,key,row);
         if(r.Status)await syncGenikiFulfillment(admin,row,r);
         await db.courierShipment.updateMany({
           where: { id: row.id, status:row.status, genikiTerminalSynced:false },

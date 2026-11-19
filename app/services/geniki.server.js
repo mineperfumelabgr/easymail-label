@@ -108,6 +108,19 @@ export const genikiLive = client(
   "GENIKI_LIVE_",
 );
 
+export async function readGenikiTracking(api,key,row) {
+  try{return await api.tracking(key,row.voucher);}
+  catch(error){
+    if(error.genikiCode!=="9"||!row.reference||!["Ready for pickup","Label issued"].includes(row.status))throw error;
+    // A newly issued, unfinalized job can exist before the tracking register.
+    // Confirm the exact voucher on our own open job; never mask an unknown,
+    // closed, cancelled, or mismatched job as a successful tracking response.
+    const found=await api.lookup(key,row.reference).catch(()=>null),job=found?.Jobs?.VoucherJob;
+    if(found?.Count!=="1"||job?.Voucher?.VoucherNo!==row.voucher||job.IsClosed!=="false"||job.IsCanceled!=="false")throw error;
+    return {Status:"Ready for pickup",AwaitingRegistration:true};
+  }
+}
+
 export async function syncGenikiTracking(db, shop, applyTag) {
   const rows = await db.courierShipment.findMany({
     where: { shop, carrier: "Geniki", environment: "live", genikiTerminalSynced:false, voucher: {not:null},
@@ -116,10 +129,11 @@ export async function syncGenikiTracking(db, shop, applyTag) {
   });
   if (!rows.length) return {checked:0,errors:0};
   const key = await genikiLive.authenticate();
-  let errors=0;
+  let errors=0,pending=0;
   for (const row of rows) {
     try {
-      const result=await genikiLive.tracking(key,row.voucher);
+      const result=await readGenikiTracking(genikiLive,key,row);
+      if(result.AwaitingRegistration)pending++;
       if(result.Status)await applyTag(row,result);
       await db.courierShipment.updateMany({where:{id:row.id,status:row.status},data:{status:result.Status||row.status,checkedAt:new Date()}});
     } catch {
@@ -127,7 +141,7 @@ export async function syncGenikiTracking(db, shop, applyTag) {
       await db.courierShipment.update({where:{id:row.id},data:{checkedAt:new Date()}});
     }
   }
-  return {checked:rows.length,errors};
+  return {checked:rows.length,errors,pending};
 }
 
 export function genikiParcelNumbers(master, records, expectedPieces) {
