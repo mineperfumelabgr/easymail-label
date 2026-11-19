@@ -1,4 +1,5 @@
 import {PrintDocuments} from "../components/PrintDocuments";
+import {TrackingNumber} from "../components/TrackingNumber";
 import { randomUUID } from "node:crypto";
 import {
   Form,
@@ -202,7 +203,7 @@ export default function Operations() {
         <section>
           <h2>{row.orderName} · Existing label</h2>
           <p>
-            Voucher <strong>{row.voucher}</strong> · {row.status}
+            Voucher <strong><TrackingNumber carrier="Geniki" number={row.voucher}/></strong> · {row.status}
           </p>
           <Form method="post">
             <input type="hidden" name="id" value={row.id} />

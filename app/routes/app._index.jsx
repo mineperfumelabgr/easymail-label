@@ -7,6 +7,8 @@ import {fulfillmentScopes, matchesFulfillmentScope, fulfillmentLabel, isPosOrder
 import {withOrderContacts, matchingShopifyOrders, shipmentSearchWhere, enrichShipmentOrders} from "../services/shopify-order-details.server";
 import {shipmentStatus,trackingStatusFilters,matchesTrackingStatus,trackingStatusWhere} from "../services/shipment-status";
 import {OrderIdentity} from "../components/OrderIdentity";
+import {TrackingNumber} from "../components/TrackingNumber";
+import {TrackingStatusChips} from "../components/TrackingStatusChips";
 import {DailyHandover} from "../components/DailyHandover";
 import {packingPdf, renderPdf} from "../services/packing-slips.server";
 import {PrintDocuments} from "../components/PrintDocuments";
@@ -563,7 +565,7 @@ export default function Workspace() {
             : views[view]}
         </h2>
         {["daily", "tracking"].includes(view) && (
-          <Form method="get" key={p.toString()} className="controls">
+          <Form method="get" id={view==="tracking"?"courier-tracking-filters":undefined} key={p.toString()} className={view==="tracking"?"controls tracking-filters":"controls"}>
             {[...p]
               .filter(
                 ([k]) => !["country", "carrier", "date", "after", "q", "status"].includes(k),
@@ -597,12 +599,11 @@ export default function Workspace() {
               </label>
             )}
             {view === "tracking" && <label className="tracking-search">Find a shipment <input type="search" name="q" defaultValue={p.get("q")||""} maxLength={200} placeholder="Customer name, order number or email"/></label>}
-            {view === "tracking" && <label>Shipment status {select(Object.entries(trackingStatusFilters),statusFilter,"status")}</label>}
-            <button>Filter</button>
-            {view==="tracking" && (p.get("q")||statusFilter) && <Link to={href({q:null,status:null,after:null})}>Clear search and status</Link>}
+            <button name={view==="tracking"?"status":undefined} value={statusFilter} disabled={busy}>Filter</button>
+            {view==="tracking" && (p.get("q")||statusFilter) && <Link className="filter-reset" to={href({q:null,status:null,after:null})}>Clear search and status</Link>}
           </Form>
         )}
-        {view==="tracking" && <><div className="status-legend" aria-label="Shipment status colours">{[["delivered","Delivered"],["returned","Returned"],["problem","Problem"],["transit","In transit"],["waiting","Awaiting pickup"],["picked-up","Picked up"]].map(([tone,label])=><span key={tone} className="shipment-state" data-tone={tone}>{label}</span>)}</div><p className="result-count">{rows.length} shipments · latest 250 matching results{p.get("q")?" · search across saved shipment history":""}</p></>}
+        {view==="tracking" && <><TrackingStatusChips selected={statusFilter} disabled={busy}/><p className="result-count">{rows.length} shipments · latest 250 matching results{p.get("q")?" · search across saved shipment history":""}</p></>}
         {view==="orders" && <Form method="get" key={"order-filter"+p.toString()} className="controls">{[...p].filter(([k])=>!["scope","limit","q","after"].includes(k)).map(([k,v])=><input type="hidden" key={k} name={k} value={v}/>)}<input type="hidden" name="scope" value={p.get("scope")||"unfulfilled"}/><nav aria-label="Fulfillment status">{[["all","All"],["unfulfilled","Unfulfilled"],["fulfilled","Fulfilled"],["on_hold","On Hold"]].map(([value,label])=><Link key={value} aria-current={(p.get("scope")||"unfulfilled")===value?"page":undefined} to={href({scope:value,after:null})}>{label}</Link>)}</nav><label>Orders per page <select name="limit" defaultValue={p.get("limit")||"50"}>{[50,100,150,200].map(n=><option key={n}>{n}</option>)}</select></label><label>Search these orders <input name="q" defaultValue={p.get("q")||""} placeholder="Recipient or order number"/></label><button>Apply</button></Form>}
         {view==="orders" && <p className="result-count">Shopify Point of Sale orders are excluded from every tab.</p>}
         {view==="daily" && <DailyHandover key={date+carrier} {...{date,carrier,sandbox,dailyTotals,pickupLists,pickupWarning}}/>}
@@ -695,7 +696,7 @@ export default function Workspace() {
                             <input type="hidden" name={"name-"+r.id} value={r.name||r.orderName}/>
                             {view==="orders" && <div className="order-tags"><span className="fulfillment-chip" data-status={r.cancelledAt?"CANCELLED":r.displayFulfillmentStatus}>{fulfillmentLabel(r)}</span>{r.tags.map(tag=><span key={tag} className="order-tag" data-tone={/error|return/i.test(tag)?"red":/cod/i.test(tag)?"gold":/pre.?order/i.test(tag)?"blue":"purple"}>{tag}</span>)}</div>}
                             {view!=="orders" && <small>{r.addressPreview || "—"}</small>}
-                            {r.label && <Link to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.label.id})}> · Existing voucher {r.label.voucher}</Link>}
+                            {r.label && <div className="existing-voucher">Existing voucher <TrackingNumber carrier="Geniki" number={r.label.voucher}/> · <Link to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.label.id})}>Manage voucher</Link></div>}
                             {(r.test || r.environment === "test") && " · Test"}
                           </td>
                           <td>
@@ -727,7 +728,7 @@ export default function Workspace() {
                             )}
                           </td>
                           {view==="orders" && r.displayFulfillmentStatus==="FULFILLED"?<td>
-                              <div>Voucher {r.shipment?.voucher || r.acsVoucher?.value || "—"}</div>
+                              <div>Voucher <TrackingNumber carrier={r.shipment?.carrier || (r.acsVoucher?.value?"ACS":"")} number={r.shipment?.voucher || r.acsVoucher?.value}/></div>
                               <div>Parcels {r.shipment?.pieces ?? r.acsPieces?.value ?? "—"} · COD {r.shipment?.codAmount==null?"—":r.shipment.codAmount.toFixed(2)+" €"}</div>
                               {r.shipment?.weight!=null && <div>Weight {r.shipment.weight} kg</div>}
                               {r.acsPickup?.value && <div>Pickup {r.acsPickup.value}</div>}
@@ -747,7 +748,7 @@ export default function Workspace() {
                             </div></td>:<td>{r.preparedBy||"—"} · {r.pieces||r.labels?.length||"—"}</td>}
                           {view !== "orders" && (
                             <>
-                              <td>{r.carrier==="Geniki" && r.voucher?<Link to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.id})}>{r.voucher}</Link>:r.voucher||"—"}{view==="daily" && r.voucher && r.status!=="Cancelled" && <div><button type="submit" name="intent" value={"cancel-row:"+r.id} disabled={sandbox&&r.carrier==="ACS"} onClick={e=>{if(!window.confirm("Cancel "+r.carrier+" voucher "+r.voucher+" for "+r.orderName+"? Review its Shopify fulfillment separately."))e.preventDefault()}}>Cancel voucher</button></div>}</td>
+                              <td><TrackingNumber carrier={r.carrier} number={r.voucher}/>{r.carrier==="Geniki" && r.voucher && <Link className="manage-voucher-link" to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.id})}>Manage voucher</Link>}{view==="daily" && r.voucher && r.status!=="Cancelled" && <div><button type="submit" name="intent" value={"cancel-row:"+r.id} disabled={sandbox&&r.carrier==="ACS"} onClick={e=>{if(!window.confirm("Cancel "+r.carrier+" voucher "+r.voucher+" for "+r.orderName+"? Review its Shopify fulfillment separately."))e.preventDefault()}}>Cancel voucher</button></div>}</td>
                               <td><span className="shipment-state" data-tone={shipmentStatus(r).tone}>{shipmentStatus(r).label}</span></td>
                             </>
                           )}

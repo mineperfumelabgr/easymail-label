@@ -157,8 +157,6 @@
 .courier .shipment-state[data-tone="transit"]{background:#dbeafe;color:#1d4ed8;border-color:#93c5fd}
 .courier .shipment-state[data-tone="waiting"]{background:#e5e7eb;color:#374151;border-color:#cbd5e1}
 .courier .shipment-state[data-tone="picked-up"]{background:#cffafe;color:#155e75;border-color:#67e8f9}
-.courier .status-legend{display:flex;flex-wrap:wrap;gap:7px;margin:8px 0 12px}
-.courier .status-legend .shipment-state{font-size:12px;padding:3px 8px}
 .courier .result-count{font-size:13px;color:#52617b;margin:6px 0}
 .courier .order-identity a{color:inherit;text-decoration:none}
 .courier .order-identity a:hover,.courier .order-email a:hover{text-decoration:underline;text-underline-offset:3px}
@@ -168,3 +166,20 @@
 .courier .tracking-search input{min-width:min(300px,65vw)}
 .courier .contact-access-notice{padding:12px 14px;background:#fff8e6;border:1px solid #ebcc79;border-radius:8px;color:#775715}
 .fulfillment-chip[data-status="CANCELLED"]{background:#fee2e2;color:#991b1b}
+
+.courier .tracking-filters{display:grid;grid-template-columns:max-content max-content minmax(180px,1fr) auto;align-items:end;gap:12px}
+.courier .tracking-filters>label{display:grid;gap:5px;font-size:13px;font-weight:600;min-width:0}
+.courier .tracking-filters .tracking-search input{min-width:0;width:100%;box-sizing:border-box}
+.courier .tracking-filters .filter-reset{grid-column:1/-1;justify-self:start;font-size:13px}
+.courier .status-filters{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 14px}
+.courier .status-filters .shipment-state{border-radius:18px;cursor:pointer;padding:7px 11px;min-height:36px;font-size:13px;transition:box-shadow .12s,transform .12s}
+.courier .status-filters .shipment-state:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 2px 5px #24355520}
+.courier .status-filters .shipment-state[aria-pressed="true"]{border-color:currentColor;box-shadow:inset 0 0 0 1px currentColor;font-weight:750}
+.courier .shipment-state[data-tone="all"]{background:#f2f4fa;color:#334155;border-color:#cbd5e1}
+.courier .shipment-state[data-tone="all"]::before{display:none}
+.courier .tracking-number{display:inline-flex;align-items:center;gap:4px;color:#245499;font-variant-numeric:tabular-nums;font-weight:650;text-decoration:none}
+.courier .tracking-number:hover{text-decoration:underline;text-underline-offset:3px}
+.courier .external-link-mark{font-size:11px;opacity:.7}
+.courier .manage-voucher-link{display:block;width:fit-content;margin-top:5px;font-size:12px;color:#5c4f7a}
+.courier .existing-voucher{font-size:13px;margin-top:4px}
+@media(max-width:760px){.courier .tracking-filters{grid-template-columns:minmax(0,1fr) max-content}.courier .tracking-filters .tracking-search{grid-column:auto}.courier .tracking-filters select{max-width:100%;width:100%;box-sizing:border-box}}

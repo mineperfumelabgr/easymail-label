@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {matchesFulfillmentScope,fulfillmentLabel,matchesOrderSearch,orderIdentity,shopifyAdminLink} from "../app/services/order-display.js";
-import {shipmentStatus,matchesTrackingStatus,trackingStatusWhere} from "../app/services/shipment-status.js";
+import {shipmentStatus,matchesTrackingStatus,trackingStatusWhere,trackingStatusChips} from "../app/services/shipment-status.js";
+import {courierTrackingUrl} from "../app/services/courier-tracking.js";
 
 test("stale search results cannot place fulfilled or cancelled orders in Unfulfilled",()=>{
   for(const displayFulfillmentStatus of ["FULFILLED","FULFILLMENT_NOT_REQUIRED","ON_HOLD","SCHEDULED"])
@@ -73,4 +74,16 @@ test("picked-up and transit filters use the same ACS checkpoint interpretation a
   assert.ok(trackingStatusWhere("problem","acs").OR[0].status.in.includes("DELIVERY_DELAYED"));
   assert.ok(trackingStatusWhere("delivered","geniki").OR[0].status.in.includes("DELIVERED"));
   assert.deepEqual(trackingStatusWhere("invalid","acs"),{});
+});
+
+test("tracking status shortcuts follow the preparation-to-delivery workflow",()=>{
+  assert.deepEqual(trackingStatusChips.map(([key])=>key),["","waiting","picked-up","transit","delivered","problem","returned"]);
+});
+
+test("tracking numbers open the matching courier rather than a label-management page",()=>{
+  assert.equal(courierTrackingUrl("Geniki","1234567890"),"https://www.taxydromiki.com/en/track/1234567890");
+  assert.equal(courierTrackingUrl("ACS","1234567890"),"https://webapp.acscourier.net/track-shipment/1234567890");
+  assert.equal(courierTrackingUrl("Geniki","123/456"),"https://www.taxydromiki.com/en/track/123%2F456");
+  assert.equal(courierTrackingUrl("unknown","123"),null);
+  assert.equal(courierTrackingUrl("ACS",null),null);
 });

@@ -46,6 +46,16 @@ export const trackingStatusFilters = {
   cancelled: "Cancelled / replaced vouchers",
 };
 
+export const trackingStatusChips = [
+  ["", "All statuses", "all"],
+  ["waiting", "Awaiting pickup", "waiting"],
+  ["picked-up", "Picked up", "picked-up"],
+  ["transit", "In transit", "transit"],
+  ["delivered", "Delivered", "delivered"],
+  ["problem", "Problem", "problem"],
+  ["returned", "Returned", "returned"],
+];
+
 function matchesCode(code, filter) {
   if (!filter) return true;
   if (filter === "cancelled") return ["CANCELLED","SUPERSEDED"].includes(code);
