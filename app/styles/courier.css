@@ -182,4 +182,6 @@
 .courier .external-link-mark{font-size:11px;opacity:.7}
 .courier .manage-voucher-link{display:block;width:fit-content;margin-top:5px;font-size:12px;color:#5c4f7a}
 .courier .existing-voucher{font-size:13px;margin-top:4px}
+.courier[data-view="tracking"] :is(th,td):nth-child(2){width:240px;max-width:240px;white-space:normal;overflow-wrap:anywhere}
+.courier[data-view="tracking"] .order-identity>*{min-width:0}
 @media(max-width:760px){.courier .tracking-filters{grid-template-columns:minmax(0,1fr) max-content}.courier .tracking-filters .tracking-search{grid-column:auto}.courier .tracking-filters select{max-width:100%;width:100%;box-sizing:border-box}}
