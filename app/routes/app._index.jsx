@@ -9,6 +9,8 @@ import {shipmentStatus,trackingStatusFilters,matchesTrackingStatus,trackingStatu
 import {OrderIdentity} from "../components/OrderIdentity";
 import {TrackingNumber} from "../components/TrackingNumber";
 import {TrackingStatusChips} from "../components/TrackingStatusChips";
+import {finalizeGenikiDay} from "../services/geniki-handover.server";
+import {DailyVoucherActions,CustomerReturnLink} from "../components/VoucherActions";
 import {DailyHandover} from "../components/DailyHandover";
 import {packingPdf, renderPdf} from "../services/packing-slips.server";
 import {PrintDocuments} from "../components/PrintDocuments";
@@ -84,6 +86,7 @@ export async function loader({ request }) {
   const employees = view === "orders" ? await db.employee.findMany({where:{shop},select:{id:true,name:true},orderBy:{name:"asc"}}) : [];
   let dailyTotals={ACS:0,Geniki:0};
   let pickupLists=[],pickupWarning="";
+  const genikiHandovers=view==="daily"?await db.genikiDailyHandover.findMany({where:{shop,environment:isCourierTestShop(shop)?"test":"live"},orderBy:{date:"desc"},take:366}):[];
   const sandbox=isCourierTestShop(shop);
   const query=String(p.get("q")||"").trim().slice(0,200);
   const statusFilter=view==="tracking" && Object.hasOwn(trackingStatusFilters,p.get("status")) ? p.get("status") : "";
@@ -117,7 +120,7 @@ export async function loader({ request }) {
     orders = data.orders.nodes.map(order=>({...order,...orderIdentity(order)}))
       .filter(order=>matchesFulfillmentScope(order,scope) && matchesOrderSearch(order,query));
     const orderIds=orders.map(o=>o.id);
-    const existing=await db.courierShipment.findMany({where:{shop,OR:[{orderId:{in:orderIds}},{sourceOrderId:{in:orderIds}}],voucher:{not:null},status:{notIn:["Cancelled","Superseded"]}},orderBy:{createdAt:"desc"},select:{id:true,orderId:true,sourceOrderId:true,carrier:true,weight:true,pieces:true,preparedBy:true,codAmount:true,voucher:true}});
+    const existing=await db.courierShipment.findMany({where:{shop,OR:[{orderId:{in:orderIds}},{sourceOrderId:{in:orderIds}}],voucher:{not:null},status:{notIn:["Cancelled","Superseded"]}},orderBy:{createdAt:"desc"},select:{id:true,orderId:true,sourceOrderId:true,carrier:true,weight:true,pieces:true,preparedBy:true,codAmount:true,voucher:true,returnSerial:true,status:true}});
     for(const order of orders){
       order.shipment=existing.find(row=>(row.sourceOrderId||row.orderId)===order.id);
       order.label=order.shipment?.carrier==="Geniki"?order.shipment:null;
@@ -209,7 +212,7 @@ export async function loader({ request }) {
     if(country) rows=rows.filter(r=>r.country===country);
     if(view==="tracking") rows=rows.slice(0,250);
   }
-  return { view, rules, orders, rows, country, carrier, date, employees, next, pickupLists,pickupWarning,sandbox,dailyTotals,shop,contactAccessLimited,statusFilter };
+  return { view, rules, orders, rows, country, carrier, date, employees, next, pickupLists,pickupWarning,sandbox,dailyTotals,shop,contactAccessLimited,statusFilter,genikiHandovers };
 }
 
 async function labelErrorTag(admin,id,carrier,add){
@@ -273,36 +276,10 @@ export async function action({ request }) {
     }catch(error){return {messages:[error.message]}}
   }
   if (intent === "close") {
-    const date = f.get("closeDate"),
-      environment = f.get("environment");
-    if (
-      !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
-      !["live", "test"].includes(environment) ||
-      date > athensDay(new Date()) ||
-      !Number.isFinite(Date.parse(date+"T12:00:00Z")) ||
-      new Date(date+"T12:00:00Z").toISOString().slice(0,10)!==date ||
-      f.get("confirmClose") !== "on"
-    )
-      return {
-        messages: ["Choose a valid handover date and confirm finalization."],
-      };
-    if (isCourierTestShop(shop) && environment === "live") return {messages:["Choose Test for this store."]};
-    const api = environment === "live" ? genikiLive : genikiSandbox;
-    try {
-      const key = await api.authenticate();
-      await api.closeBetween(key, date + "T00:00:00", date + "T23:59:59.999");
-      return {
-        messages: [
-          "Geniki confirmed finalization for " +
-            date +
-            " (" +
-            environment +
-            ").",
-        ],
-      };
-    } catch (e) {
-      return { messages: [e.message] };
-    }
+    try{
+      const {record,messages}=await finalizeGenikiDay(shop,String(f.get("closeDate")||""),String(f.get("environment")||""),athensDay(new Date()));
+      return {messages,genikiHandover:record};
+    }catch(error){return {messages:[error.message]};}
   }
   const rowCancel=typeof intent==="string" && intent.startsWith("cancel-row:");
   const ids = rowCancel?[intent.slice(11)]:[...new Set(f.getAll("selected"))];
@@ -483,7 +460,7 @@ function CountryBadge({code}){
   return <span className="country-chip" data-code={code}>{flag && <span aria-hidden="true">{flag}</span>}{countries[code]||code||"—"}</span>;
 }
 export default function Workspace() {
-  const { view, rules, orders, rows, country, carrier, date, next, employees, accessNotice, pickupLists=[],pickupWarning,sandbox,dailyTotals,shop,contactAccessLimited,statusFilter="" } =
+  const { view, rules, orders, rows, country, carrier, date, next, employees, accessNotice, pickupLists=[],pickupWarning,sandbox,dailyTotals,shop,contactAccessLimited,statusFilter="",genikiHandovers=[] } =
       useLoaderData(),
     result = useActionData(),
     busy = useNavigation().state !== "idle";
@@ -591,8 +568,7 @@ export default function Workspace() {
         {view==="tracking" && <><TrackingStatusChips selected={statusFilter} disabled={busy}/><p className="result-count">{rows.length} shipments · latest 250 matching results{p.get("q")?" · search across saved shipment history":""}</p></>}
         {view==="orders" && <Form method="get" key={"order-filter"+p.toString()} className="controls">{[...p].filter(([k])=>!["scope","limit","q","after"].includes(k)).map(([k,v])=><input type="hidden" key={k} name={k} value={v}/>)}<input type="hidden" name="scope" value={p.get("scope")||"unfulfilled"}/><nav aria-label="Fulfillment status">{[["all","All"],["unfulfilled","Unfulfilled"],["fulfilled","Fulfilled"],["on_hold","On Hold"]].map(([value,label])=><Link key={value} aria-current={(p.get("scope")||"unfulfilled")===value?"page":undefined} to={href({scope:value,after:null})}>{label}</Link>)}</nav><label>Orders per page <select name="limit" defaultValue={p.get("limit")||"50"}>{[50,100,150,200].map(n=><option key={n}>{n}</option>)}</select></label><label>Search Shopify orders <input name="q" defaultValue={p.get("q")||""} placeholder="Customer name, order number or email"/></label><button>Apply</button></Form>}
         {view==="orders" && <p className="result-count">Search runs across Shopify order history within the selected status, before the 50–200 result limit. Choose All to include fulfilled orders. Point of Sale orders are excluded.</p>}
-        {view==="daily" && <DailyHandover key={date+carrier} {...{date,carrier,sandbox,dailyTotals,pickupLists,pickupWarning}}/>}
-        {view==="orders" && <details open={!employees.length || undefined}><summary>Add an employee</summary><Form method="post"><label>Employee name <input name="name" required maxLength={100}/></label><button name="intent" value="addEmployee">Add employee</button></Form></details>}
+        {view==="daily" && <DailyHandover key={date+carrier} {...{date,carrier,sandbox,dailyTotals,pickupLists,pickupWarning,genikiHandovers}}/>}
         {result && <PrintDocuments result={result}/>}
         <Form method="post" key={view + p.toString()} onSubmit={validatePreparation}>
           <fieldset disabled={busy}><input type="hidden" name="dailyDate" value={date}/>
@@ -622,7 +598,6 @@ export default function Workspace() {
                     <>
                       {employeeWarning && <div className="preparation-warning" role="alert" tabIndex={-1} ref={employeeAlert}><strong>Choose an employee to continue</strong><span>{employeeWarning}</span></div>}
                       <label>Prepared by <select name="employee" defaultValue="" aria-invalid={Boolean(employeeWarning)} onChange={()=>setEmployeeWarning("")}><option value="">Select employee</option>{employees.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></label>
-                      <Link to={"/app/employees?"+p}>Manage employees</Link>
                       <button name="intent" value="both">Prepare packing slips + vouchers</button><button name="intent" value="packing" formNoValidate>Print packing slips only</button><button name="intent" value="issue">Prepare vouchers only</button>
                     </>
                   ) : view === "daily" ? (
@@ -720,6 +695,7 @@ export default function Workspace() {
                               {r.shipment?.preparedBy && <div>Prepared by {r.shipment.preparedBy}</div>}
                               <Link className="voucher-action new-voucher-button" to={"/app/shipment-operation?"+new URLSearchParams({...Object.fromEntries([...p].filter(([key])=>["host","shop","embedded"].includes(key))),mode:"new",order:r.id,carrier:r.shipment?.carrier||(r.acsVoucher?.value?"ACS":rules[r.shippingAddress?.countryCodeV2]||"ACS")})}>New voucher</Link>
                               <small className="action-explanation">Adds a tracking number · keeps previous vouchers</small>
+                              <CustomerReturnLink row={r.label} params={p}/>
                             </td>:view==="orders"?<td><div className="parcel-controls">
                             <label>Parcels <select name={"pieces-"+r.id} defaultValue="1">{[1,2,3,4,5].map(n=><option key={n}>{n}</option>)}</select></label>
                             {(choices[r.id]||rules[r.shippingAddress?.countryCodeV2])==="Geniki"?<label>Total kg <input type="number" name={"weight-"+r.id} step=".01" min=".01" defaultValue="1"/></label>:<details><summary>ACS options</summary>
@@ -729,7 +705,10 @@ export default function Workspace() {
                             </div></td>:<td>{r.preparedBy||"—"} · {r.pieces||r.labels?.length||"—"}</td>}
                           {view !== "orders" && (
                             <>
-                              <td><TrackingNumber carrier={r.carrier} number={r.voucher}/>{r.carrier==="Geniki" && r.voucher && <Link className="manage-voucher-link" to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.id})}>Manage voucher</Link>}{view==="daily" && r.voucher && !["Cancelled","Superseded"].includes(r.status) && /^gid:\/\/shopify\/Order\/\d+$/.test(r.sourceOrderId||r.orderId||"") && <Link className="voucher-action replace-voucher-button" to={"/app/shipment-operation?"+new URLSearchParams({...Object.fromEntries([...p].filter(([key])=>["host","shop","embedded"].includes(key))),mode:"replace",...(r.id.startsWith("legacy:")?{order:r.orderId,voucher:r.voucher,carrier:r.carrier}:{shipment:r.id})})}>Replace voucher</Link>}{view==="tracking" && r.carrier==="Geniki" && r.voucher && !["Cancelled","Superseded"].includes(r.status) && <Link className="voucher-action return-voucher-button" to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.id,section:"return"})+"#customer-return"}>{r.returnSerial?"Print customer return":"Create customer return"}</Link>}{view==="daily" && r.voucher && !["Cancelled","Superseded"].includes(r.status) && <div><button type="submit" name="intent" value={"cancel-row:"+r.id} disabled={sandbox&&r.carrier==="ACS"} onClick={e=>{if(!window.confirm("Cancel "+r.carrier+" voucher "+r.voucher+" for "+r.orderName+"? Review its Shopify fulfillment separately."))e.preventDefault()}}>Cancel voucher</button></div>}</td>
+                              <td><TrackingNumber carrier={r.carrier} number={r.voucher}/>{r.carrier==="Geniki" && r.voucher && <Link className="manage-voucher-link" to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),shipment:r.id})}>Manage voucher</Link>}
+                                {view==="daily"&&<DailyVoucherActions row={r} params={p} sandbox={sandbox}/>}
+                                {view==="tracking"&&<CustomerReturnLink row={r} params={p}/>}
+                              </td>
                               <td><span className="shipment-state" data-tone={shipmentStatus(r).tone}>{shipmentStatus(r).label}</span></td>
                             </>
                           )}
@@ -756,7 +735,9 @@ export default function Workspace() {
           </div>
         )}
       </section>
-      <footer>
+      <footer aria-label="Operations and settings">
+        <Link to={"/app/employees?"+p}>Employees · manage and create</Link>
+        <Link to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),section:"return"})}>Geniki customer returns</Link>
         <Link to={"/app/acs-operations?"+p}>ACS Operations</Link>
         <Link to={"/app/geniki-operations?"+p}>Geniki Operations</Link>
         <Link to={"/app/vouchers?" + p}>Other couriers · EasyMail</Link>

@@ -191,3 +191,12 @@ model GenikiTagRule {
   tag String
   @@id([shop,status])
 }
+
+model GenikiDailyHandover {
+  shop String
+  date String
+  environment String
+  finalizedAt DateTime
+  confirmations Int @default(1)
+  @@id([shop, date, environment])
+}

@@ -195,3 +195,19 @@
 .courier .operation-notice[data-tone=error]{border-color:#d34a4a;background:#fff1f2}
 .courier .voucher-operation-form .controls{align-items:flex-start}.courier .voucher-operation-form label{display:grid;gap:5px;font-weight:600}
 .courier .voucher-operation-form input[type=number]{width:110px}.courier .voucher-operation-form .operation-confirm{display:flex;align-items:center;gap:8px;margin:20px 0}
+
+/* Equal-size voucher controls, separate from the shipment status badge. */
+.courier .daily-voucher-actions{display:flex;flex-direction:column;align-items:stretch;gap:8px;margin-top:12px;width:160px;max-width:100%}
+.courier .daily-voucher-actions .voucher-action{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:100%;min-height:38px;margin:0;padding:8px 12px;border-radius:8px;font:650 13px/1.4 system-ui,sans-serif;text-align:center;text-decoration:none}
+.courier .daily-voucher-actions .cancel-voucher-button{color:#aa263e;background:#fff1f3;border:1px solid #eebbc5}
+.courier .daily-voucher-actions .replace-voucher-button{color:#874814;background:#fff3e5;border:1px solid #e8c397}
+.courier .daily-voucher-actions .voucher-action:hover{filter:brightness(.97)}
+.courier .handover-confirmation{display:grid;gap:4px;padding:12px 14px;margin-top:12px;border:1px solid #a4d4b7;border-radius:9px;background:#edf9f1;color:#245b3a;max-width:680px}
+.courier .handover-confirmation span{display:block;font-size:13px}
+.courier .return-shipment-list{display:grid;gap:10px;margin-top:20px}
+.courier .return-shipment-list article{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:14px;border:1px solid #d9dff0;border-radius:10px;background:#fafaff}
+.courier .return-shipment-list article>div{display:grid;gap:4px}
+.courier .return-shipment-list article span{font-size:13px;color:#586578}
+.courier .operations nav a[aria-current=page],.courier.operations nav a[aria-current=page]{background:#263e70;color:white;border-color:#263e70}
+.courier footer[aria-label="Operations and settings"] a{border-bottom:3px solid #8294c9}
+@media(max-width:600px){.courier .return-shipment-list article{align-items:flex-start;flex-direction:column}.courier .daily-voucher-actions{width:145px}}

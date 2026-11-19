@@ -3,6 +3,8 @@ import {TrackingNumber} from "../components/TrackingNumber";
 import { randomUUID } from "node:crypto";
 import {
   Form,
+  Link,
+  useSearchParams,
   useActionData,
   useLoaderData,
   useNavigation,
@@ -21,18 +23,23 @@ export async function loader({ request }) {
   const {
     session: { shop },
   } = await authenticate.admin(request);
-  const id = new URL(request.url).searchParams.get("shipment");
+  const params=new URL(request.url).searchParams;
+  const id=params.get("shipment");
+  const query=String(params.get("q")||"").trim().slice(0,200);
+  const environment=isCourierTestShop(shop)?"test":"live";
+  const section=["manual","tags","return"].includes(params.get("section"))?params.get("section"):(id?"voucher":"manual");
   const row = id
     ? await db.courierShipment.findFirst({
         where: { shop, id, carrier: "Geniki" },
       })
     : null;
   const rules = await db.genikiTagRule.findMany({ where: { shop } });
+  const returnShipments=section==="return"&&!id?await db.courierShipment.findMany({where:{shop,carrier:"Geniki",environment,voucher:{not:null},status:{notIn:["Cancelled","Superseded"]},AND:[{OR:[{sourceOrderId:{startsWith:"gid://shopify/Order/"}},{orderId:{startsWith:"gid://shopify/Order/"}}]},...(query?[{OR:["orderName","voucher","recipientName","customerName","customerEmail"].map(field=>({[field]:{contains:query,mode:"insensitive"}}))}]:[])]},orderBy:{createdAt:"desc"},take:50,select:{id:true,orderName:true,voucher:true,recipientName:true,customerName:true,returnSerial:true,country:true}}):[];
   return {
     row,
     rules: Object.fromEntries(rules.map((r) => [r.status, r.tag])),
     token: randomUUID(),
-    section:new URL(request.url).searchParams.get("section"),
+    section,query,returnShipments,environment,
   };
 }
 export async function action({ request }) {
@@ -190,12 +197,23 @@ export async function action({ request }) {
   }
 }
 export default function Operations() {
-  const { row, rules, token, section } = useLoaderData(),
+  const { row, rules, token, section,query,returnShipments,environment } = useLoaderData(),
     result = useActionData(),
     busy = useNavigation().state !== "idle";
+  const [params]=useSearchParams();
+  const target=(part,shipment)=>{
+    const p=new URLSearchParams([...params].filter(([key])=>["shop","host","embedded"].includes(key)));
+    p.set("section",part);if(shipment)p.set("shipment",shipment);
+    return "/app/geniki-operations?"+p;
+  };
   return (
     <main className="courier operations">
-      <h1>Geniki operations</h1>
+      <header><h1>Geniki Operations</h1><p>Manage manual shipments, customer-requested returns and order tag settings.</p><nav aria-label="Geniki operations">{[["manual","Manual shipments"],["return","Customer returns"],["tags","Order tag settings"]].map(([part,label])=><Link key={part} to={target(part)} aria-current={section===part?"page":undefined}>{label}</Link>)}</nav></header>
+      {section==="return"&&!row&&<section id="customer-returns"><h2>Customer returns</h2><p>Choose a shipment originally sent with Geniki. Create the return only when the customer requests it; nothing is sent automatically.</p>
+        <Form method="get" className="controls">{[...params].filter(([key])=>["host","shop","embedded"].includes(key)).map(([key,value])=><input key={key} type="hidden" name={key} value={value}/>)}<input type="hidden" name="section" value="return"/><label>Find a Geniki shipment <input name="q" defaultValue={query} placeholder="Order, customer, email or voucher"/></label><button>Search shipments</button></Form>
+        <div className="return-shipment-list">{returnShipments.map(shipment=><article key={shipment.id}><div><strong>{shipment.orderName}</strong><span>{shipment.recipientName||shipment.customerName||""} · {shipment.country}</span><TrackingNumber carrier="Geniki" number={shipment.voucher}/></div><Link className="voucher-action return-voucher-button" to={target("return",shipment.id)+"#customer-return"}>{shipment.returnSerial?"Print customer return":"Create customer return"}</Link></article>)}</div>
+        {!returnShipments.length&&<p>No eligible Geniki shipments found. Returns are available for Shopify orders already shipped with Geniki.</p>}
+      </section>}
       {row && (
         <section>
           <h2>{row.orderName} · Existing label</h2>
@@ -214,7 +232,7 @@ export default function Operations() {
             ) &&
             !["Cancelled", "Superseded"].includes(row.status) && (
               <details id="customer-return" open={section==="return" || undefined}>
-                <summary className="action-tile return-action">Create / print customer return</summary>
+                <summary className="action-tile return-action">{row.returnSerial?"Print customer return":"Create customer return"}</summary>
                 <p>Generate a return coupon only when requested by the customer. It is not sent automatically and does not replace the original outbound tracking.</p>
                 <Form method="post">
                   <input type="hidden" name="id" value={row.id} />
@@ -288,7 +306,7 @@ export default function Operations() {
           )}
         </section>
       )}
-      <section>
+      {section==="manual"&&<section>
         <h2>Manual shipment</h2>
         <Form method="post">
           <input type="hidden" name="token" value={token} />
@@ -335,7 +353,7 @@ export default function Operations() {
             </label>
             <label>
               Environment{" "}
-              <select name="environment">
+              <select name="environment" defaultValue={environment}>
                 <option value="test">Test</option>
                 <option value="live">Live</option>
               </select>
@@ -345,9 +363,9 @@ export default function Operations() {
             </button>
           </div>
         </Form>
-      </section>
-      <section>
-        <h2>Order tags</h2>
+      </section>}
+      {section==="tags"&&<section>
+        <h2>Order tag settings</h2>
         <Form method="post">
           <div className="controls">
             {tagStates.map((status) => (
@@ -365,7 +383,7 @@ export default function Operations() {
             </button>
           </div>
         </Form>
-      </section>
+      </section>}
     </main>
   );
 }
