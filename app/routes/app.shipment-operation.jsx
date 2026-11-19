@@ -59,7 +59,7 @@ export default function ShipmentOperation(){
   const {order,prior,input,employees,date,token,fulfillments,defaultCod,shop}=data;
   const replace=input.mode==="replace";
   return <main className="courier operations shipment-operation">
-    <header><h1>{replace?"Replace voucher":"New voucher for an existing order"}</h1><Link to="/app">← Prepare orders</Link> · <Link to="/app?view=daily">Daily Labels</Link></header>
+    <header><h1>{replace?"Replace voucher":"New voucher for an existing order"}</h1><Link to="/app?view=daily">Daily Labels</Link></header>
     {result&&<section className="operation-notice" data-tone={result.ok?"success":"error"} role={result.ok?"status":"alert"}>
       <h2>{result.ok?"Voucher ready":"Action not completed"}</h2><p>{result.message}</p>
       {result.warning&&<p role="alert">{result.warning}</p>}

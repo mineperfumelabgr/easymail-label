@@ -1,0 +1,5 @@
+.courier-return-nav{box-sizing:border-box;max-width:1250px;margin:0 auto;padding:20px clamp(12px,3vw,38px) 0;font:15px/1.4 system-ui,sans-serif}
+.courier-return-nav .courier-home-button{display:inline-flex;align-items:center;gap:9px;box-sizing:border-box;min-height:40px;padding:9px 15px;border:1px solid #bdcce6;border-radius:9px;background:#edf3ff;color:#254b85;font-weight:650;text-decoration:none;box-shadow:0 1px 2px #172b4d0a}
+.courier-return-nav .courier-home-button:hover{background:#dfeaff;border-color:#8fa9d4}
+.courier-return-nav .courier-home-button:focus-visible{outline:3px solid #6c91cf;outline-offset:3px}
+@media print{.courier-return-nav{display:none}}

@@ -1,3 +1,4 @@
+import {BackToHome} from "../components/BackToHome";
 import { Outlet, useLoaderData, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
@@ -24,6 +25,7 @@ export default function App() {
         <s-link href="/app/employees">Dipendenti</s-link>
         <s-link href="/app?view=tracking">Courier Tracking</s-link>
       </s-app-nav>
+      <BackToHome />
       <Outlet />
     </AppProvider>
   );

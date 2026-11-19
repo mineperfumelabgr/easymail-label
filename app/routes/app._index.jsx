@@ -738,7 +738,6 @@ export default function Workspace() {
       </section>
       <footer aria-label="Operations and settings">
         <Link to={"/app/employees?"+p}>Employees · manage and create</Link>
-        <Link to={"/app/geniki-operations?"+new URLSearchParams({...Object.fromEntries(p),section:"return"})}>Geniki customer returns</Link>
         <Link to={"/app/acs-operations?"+p}>ACS Operations</Link>
         <Link to={"/app/geniki-operations?"+p}>Geniki Operations</Link>
         <Link to={"/app/vouchers?" + p}>Other couriers · EasyMail</Link>
