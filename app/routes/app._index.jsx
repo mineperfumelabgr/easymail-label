@@ -246,10 +246,12 @@ export async function action({ request }) {
       !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
       !["live", "test"].includes(environment) ||
       date > athensDay(new Date()) ||
-      f.get("confirm") !== date
+      !Number.isFinite(Date.parse(date+"T12:00:00Z")) ||
+      new Date(date+"T12:00:00Z").toISOString().slice(0,10)!==date ||
+      f.get("confirmClose") !== "on"
     )
       return {
-        messages: ["Enter the displayed date to confirm finalization."],
+        messages: ["Choose a valid handover date and confirm finalization."],
       };
     if (isCourierTestShop(shop) && environment === "live") return {messages:["Choose Test for this store."]};
     const api = environment === "live" ? genikiLive : genikiSandbox;
