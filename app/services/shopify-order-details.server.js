@@ -57,7 +57,7 @@ export function shipmentSearchWhere(query, orderIds, includeSource=false) {
 
 export async function enrichShipmentOrders(admin, db, shop, rows, knownOrders=[]) {
   const byId=new Map(knownOrders.map(order=>[order.id,order]));
-  const ids=[...new Set(rows.filter(row=>!row.orderSourceName || !row.customerEmail || !row.addressPreview || !row.recipientName)
+  const ids=[...new Set(rows.filter(row=>!row.trackingDetailsPurgedAt && (!row.orderSourceName || !row.customerEmail || !row.addressPreview || !row.recipientName))
     .map(row=>row.sourceOrderId||row.orderId).filter(id=>/^gid:\/\/shopify\/Order\/\d+$/.test(id||"")))].filter(id=>!byId.has(id));
   let contactAccessLimited=false;
   for (let i=0;i<ids.length;i+=100) {
@@ -67,7 +67,7 @@ export async function enrichShipmentOrders(admin, db, shop, rows, knownOrders=[]
   }
   const updates=[];
   for (const [id,order] of byId) {
-    const linked=rows.filter(row=>(row.sourceOrderId||row.orderId)===id);
+    const linked=rows.filter(row=>!row.trackingDetailsPurgedAt && (row.sourceOrderId||row.orderId)===id);
     if (!linked.length) continue;
     // Keep the label's recipient/address as issued; customer identity is current.
     const details=orderIdentity(order);
@@ -79,9 +79,9 @@ export async function enrichShipmentOrders(admin, db, shop, rows, knownOrders=[]
       const changed=Object.fromEntries(Object.entries(patch).filter(([key,value])=>row[key]!==value));
       Object.assign(row,changed);
       if (!Object.keys(changed).length || row.id?.startsWith("manual:")) continue;
-      if (row.id?.startsWith("snapshot:")) updates.push(db.acsTrackingSnapshot.updateMany({where:{shop,id:row.id.slice(9)},data:changed}));
-      else if (row.id?.startsWith("legacy:")) updates.push(db.acsTrackingSnapshot.updateMany({where:{shop,voucherNo:row.voucher},data:changed}));
-      else updates.push(db.courierShipment.updateMany({where:{shop,id:row.id},data:changed}));
+      if (row.id?.startsWith("snapshot:")) updates.push(db.acsTrackingSnapshot.updateMany({where:{shop,id:row.id.slice(9),trackingDetailsPurgedAt:null},data:changed}));
+      else if (row.id?.startsWith("legacy:")) updates.push(db.acsTrackingSnapshot.updateMany({where:{shop,voucherNo:row.voucher,trackingDetailsPurgedAt:null},data:changed}));
+      else updates.push(db.courierShipment.updateMany({where:{shop,id:row.id,trackingDetailsPurgedAt:null},data:changed}));
     }
   }
   for (let i=0;i<updates.length;i+=100) await db.$transaction(updates.slice(i,i+100));

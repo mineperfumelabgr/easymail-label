@@ -3,6 +3,7 @@ import db from "../db.server";
 import { adminGraphql } from "./acs-create-label.server";
 import { genikiLive, genikiSandbox, genikiParcelNumbers } from "./geniki.server";
 import {isPosOrder} from "./order-display";
+import {confirmedCompletionDate} from "./tracking-retention";
 
 
 export async function applyGenikiTag(admin, row, status) {
@@ -194,7 +195,13 @@ export async function syncGenikiFulfillment(admin, row, result) {
   const delivered = status === "DELIVERED" && target === "RECIPIENT";
   const mapped = delivered ? "DELIVERED" : returned || status === "IN RETURN" ? "FAILURE" : status === "IN TRANSIT" ? "IN_TRANSIT" : null;
   await applyGenikiTag(admin, row, returned ? "RETURN TO SENDER" : status);
-  if (!mapped || !row.fulfillmentId) return;
+  const completedAt=delivered || returned ? confirmedCompletionDate(/(?:Z|[+-]\d\d:\d\d)$/.test(result.DeliveryDate || "")?result.DeliveryDate:null) : null;
+  if (!mapped) return;
+  if (!row.fulfillmentId) {
+    if(delivered || returned)await db.courierShipment.updateMany({where:{id:row.id,shop:row.shop,status:{notIn:["Cancelled","Superseded"]},genikiTerminalSynced:false},
+      data:{genikiTerminalSynced:true,completedAt,status:returned?"RETURN TO SENDER":status}});
+    return;
+  }
   await db.$transaction(async tx => {
     // Serialize refreshes of this shipment and re-read Shopify after acquiring the lock.
     const current = await tx.courierShipment.update({where:{id:row.id},data:{checkedAt:new Date()}});
@@ -211,6 +218,6 @@ export async function syncGenikiFulfillment(admin, row, result) {
       const errors=response.data.fulfillmentEventCreate.userErrors;
       if(errors.length) throw new Error(errors.map(e=>e.message).join(", "));
     }
-    if(delivered || returned) await tx.courierShipment.update({where:{id:row.id},data:{genikiTerminalSynced:true,status:returned?"RETURN TO SENDER":status}});
+    if(delivered || returned) await tx.courierShipment.update({where:{id:row.id},data:{genikiTerminalSynced:true,completedAt,status:returned?"RETURN TO SENDER":status}});
   },{timeout:30000});
 }

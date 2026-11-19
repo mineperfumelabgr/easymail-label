@@ -3,6 +3,7 @@ import { syncGenikiTracking } from "../services/geniki.server";
 import prisma from "../db.server";
 import { unauthenticated } from "../shopify.server";
 import { runAcsTrackingSync } from "../services/acs-tracking-sync.server";
+import {compactOldTracking} from "../services/tracking-retention.server";
 
 export async function action({ request }) {
   const expected = process.env.ACS_TRACKING_CRON_SECRET;
@@ -26,7 +27,8 @@ export async function action({ request }) {
         const { admin } = await unauthenticated.admin(shop);
         const acs = await runAcsTrackingSync(admin, shop).catch(error=>({error:error.message}));
         const geniki = await syncGenikiTracking(prisma, shop, (row,status)=>syncGenikiFulfillment(admin,row,status)).catch(error => ({error:error.message}));
-        shops.push({shop,...acs,geniki});
+        const retention=await compactOldTracking(prisma,shop).catch(error=>({error:error.message}));
+        shops.push({shop,...acs,geniki,retention});
       } catch (error) {
         shops.push({ shop, error: error?.message || "Sync failed" });
       }

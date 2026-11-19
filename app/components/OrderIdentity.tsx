@@ -21,7 +21,7 @@ export function OrderIdentity({row,shop}: {row:IdentityRow; shop:string}) {
   const orderUrl=shopifyAdminLink(shop,"orders",orderId);
   const customerUrl=shopifyAdminLink(shop,"customers",row.customerId || row.customer?.id);
   const recipient=row.shippingAddress?.name || row.recipientName;
-  const customer=row.customerName || row.customer?.displayName || recipient;
+  const customer=row.customerName || row.customer?.displayName || recipient || (customerUrl?"Customer profile":null);
   const email=row.customerEmail || row.email;
   const phone=row.shippingAddress?.phone || row.recipientPhone;
   const profile=(text:string,className:string)=>customerUrl

@@ -90,11 +90,14 @@ model AcsTrackingSnapshot {
   lastShopifyCheckpointAt DateTime?
   lastCheckedAt  DateTime @default(now())
   error          String?
+  completedAt DateTime?
+  trackingDetailsPurgedAt DateTime?
 
   @@unique([shop, voucherNo])
   @@index([shop, status, lastCheckedAt])
   @@index([shop, orderName])
   @@index([shop, recipientName])
+  @@index([shop, trackingDetailsPurgedAt, completedAt], map: "acs_tracking_retention_idx")
 }
 
 model AcsTrackingTagRule {
@@ -175,8 +178,11 @@ model CourierShipment {
   status String @default("Creating")
   fulfillmentId String?
   createdAt DateTime @default(now())
+  completedAt DateTime?
+  trackingDetailsPurgedAt DateTime?
   @@unique([shop, orderId, environment])
   @@index([shop, carrier, createdAt])
+  @@index([shop, trackingDetailsPurgedAt, completedAt], map: "courier_tracking_retention_idx")
 }
 
 model GenikiTagRule {

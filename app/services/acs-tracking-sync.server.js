@@ -2,6 +2,7 @@ import { getAcsTrackingDetails, getAcsTrackingSummary, getAcsTableRows } from ".
 import prisma from "../db.server.js";
 import {isPosOrder, orderIdentity} from "./order-display";
 import {withOrderContacts} from "./shopify-order-details.server";
+import {confirmedCompletionDate} from "./tracking-retention";
 
 const ORDER_QUERY = `#graphql
   query OrdersForAcsTracking($after: String) {
@@ -150,6 +151,17 @@ async function createShopifyEvent(admin, fulfillmentId, status, happenedAt, mess
   return payload.fulfillmentEvent;
 }
 
+// A refresh that started before compaction must not write the removed details
+// back afterwards. Guard updates at write time, including the create race.
+export async function storeAcsSnapshot({where,create,update}) {
+  const guarded={...where.shop_voucherNo,trackingDetailsPurgedAt:null};
+  const result=await prisma.acsTrackingSnapshot.updateMany({where:guarded,data:update});
+  if(result.count)return result;
+  const created=await prisma.acsTrackingSnapshot.createMany({data:[create],skipDuplicates:true});
+  if(created.count)return created;
+  return prisma.acsTrackingSnapshot.updateMany({where:guarded,data:update});
+}
+
 export async function runAcsTrackingSync(admin, shop, selectedOrderIds = null) {
     const orders = [];
     let after = null;
@@ -222,6 +234,9 @@ export async function runAcsTrackingSync(admin, shop, selectedOrderIds = null) {
         let packageStatus = null;
         try {
           const oldSnapshot = await prisma.acsTrackingSnapshot.findUnique({ where: { shop_voucherNo: { shop, voucherNo: String(number) } } });
+          if(oldSnapshot?.trackingDetailsPurgedAt && ["DELIVERED","RETURNED"].includes(oldSnapshot.status)) {
+            packageStates.push({number,status:oldSnapshot.status});result.skipped++;continue;
+          }
           const currentEvents = (fulfillment.events?.edges || []).map((edge) => edge.node);
           const voucherEvents = currentEvents.filter((event) => String(event.message || "").includes(`ACS ${number}:`))
             .sort((a, b) => new Date(a.happenedAt).getTime() - new Date(b.happenedAt).getTime());
@@ -232,10 +247,11 @@ export async function runAcsTrackingSync(admin, shop, selectedOrderIds = null) {
               await createShopifyEvent(admin, fulfillment.id, "DELIVERED", happenedAt, `ACS ${number}: ACS confirms delivery to the recipient.`);
               result.created++;
             }
-            await prisma.acsTrackingSnapshot.update({
-              where: { shop_voucherNo: { shop, voucherNo: String(number) } },
+            await prisma.acsTrackingSnapshot.updateMany({
+              where: { shop, voucherNo: String(number), trackingDetailsPurgedAt:null },
               data: {
                 ...orderIdentity(order),
+                completedAt:oldSnapshot.completedAt || confirmedCompletionDate(oldSnapshot.fulfillmentDeliveredAt || oldSnapshot.lastEventAt),
                 orderCreatedAt: order.createdAt ? new Date(order.createdAt) : null,
                 fulfillmentId: fulfillment.id,
                 fulfillmentStatus: fulfillment.displayStatus || fulfillment.status || null,
@@ -249,11 +265,12 @@ export async function runAcsTrackingSync(admin, shop, selectedOrderIds = null) {
             result.skipped++;
             continue;
           }
-          if (oldSnapshot?.status === "RETURNED" && currentEvents.some((event) => event.status === "FAILURE" && /RESTITUITO AL MITTENTE|RETURN.*TO SENDER/i.test(event.message || ""))) {
-            await prisma.acsTrackingSnapshot.update({
-              where: { shop_voucherNo: { shop, voucherNo: String(number) } },
+          if (oldSnapshot?.status === "RETURNED" && (oldSnapshot.lastShopifyEventStatus==="FAILURE" || currentEvents.some((event) => event.status === "FAILURE" && /RESTITUITO AL MITTENTE|RETURN.*TO SENDER/i.test(event.message || "")))) {
+            await prisma.acsTrackingSnapshot.updateMany({
+              where: { shop, voucherNo: String(number), trackingDetailsPurgedAt:null },
               data: {
                 ...orderIdentity(order),
+                completedAt:oldSnapshot.completedAt || confirmedCompletionDate(oldSnapshot.lastEventAt),
                 orderCreatedAt: order.createdAt ? new Date(order.createdAt) : null,
                 fulfillmentId: fulfillment.id,
                 fulfillmentStatus: fulfillment.displayStatus || fulfillment.status || null,
@@ -274,6 +291,7 @@ export async function runAcsTrackingSync(admin, shop, selectedOrderIds = null) {
             // query ACS or emit Shopify events/tags for an unverified outcome.
             const reviewSnapshot = {
               ...orderIdentity(order),
+              completedAt:null,
               shop, orderId: order.id, orderName: order.name,
               orderCreatedAt: order.createdAt ? new Date(order.createdAt) : oldSnapshot?.orderCreatedAt || null,
               fulfillmentId: fulfillment.id,
@@ -287,7 +305,7 @@ export async function runAcsTrackingSync(admin, shop, selectedOrderIds = null) {
               lastCheckpoint: oldSnapshot?.lastCheckpoint || null, lastLocation: oldSnapshot?.lastLocation || null,
               lastEventAt: oldSnapshot?.lastEventAt || null, lastCheckedAt: new Date(), error: null,
             };
-            await prisma.acsTrackingSnapshot.upsert({
+            await storeAcsSnapshot({
               where: { shop_voucherNo: { shop, voucherNo: String(number) } },
               create: reviewSnapshot,
               update: { ...reviewSnapshot, lastShopifyEventStatus: oldSnapshot?.lastShopifyEventStatus || null, lastShopifyCheckpointAt: oldSnapshot?.lastShopifyCheckpointAt || null },
@@ -303,6 +321,7 @@ export async function runAcsTrackingSync(admin, shop, selectedOrderIds = null) {
             // scan, this is a newly created label, not a failed delivery or sync error.
             const waitingSnapshot = {
               ...orderIdentity(order),
+              completedAt:["DELIVERED","RETURNED"].includes(oldSnapshot?.status) ? oldSnapshot.completedAt : null,
               shop, orderId: order.id, orderName: order.name, orderCreatedAt: order.createdAt ? new Date(order.createdAt) : null, fulfillmentId: fulfillment.id,
               fulfillmentStatus: fulfillment.displayStatus || fulfillment.status || null,
               fulfillmentCreatedAt: fulfillment.createdAt ? new Date(fulfillment.createdAt) : null,
@@ -313,7 +332,7 @@ export async function runAcsTrackingSync(admin, shop, selectedOrderIds = null) {
               lastCheckpoint: null, lastLocation: null, lastEventAt: null,
               lastCheckedAt: new Date(), error: null,
             };
-            await prisma.acsTrackingSnapshot.upsert({
+            await storeAcsSnapshot({
               where: { shop_voucherNo: { shop, voucherNo: String(number) } },
               create: waitingSnapshot,
               update: { ...waitingSnapshot, status: oldSnapshot?.status && !["SYNC_ERROR", "LABEL_CREATED"].includes(oldSnapshot.status) ? oldSnapshot.status : "LABEL_CREATED", statusLabel: oldSnapshot?.status && !["SYNC_ERROR", "LABEL_CREATED"].includes(oldSnapshot.status) ? oldSnapshot.statusLabel : waitingSnapshot.statusLabel },
@@ -322,7 +341,7 @@ export async function runAcsTrackingSync(admin, shop, selectedOrderIds = null) {
             if (isAwaitingFirstScan && oldSnapshot?.lastShopifyEventStatus !== "LABEL_PRINTED" && latestVoucherEvent?.status !== "LABEL_PRINTED") {
               await createShopifyEvent(admin, fulfillment.id, "LABEL_PRINTED", fulfillment.createdAt || new Date().toISOString(), `ACS ${number}: ACS label created; awaiting carrier pickup.`);
               result.created++;
-              await prisma.acsTrackingSnapshot.update({ where: { shop_voucherNo: { shop, voucherNo: String(number) } }, data: { lastShopifyEventStatus: "LABEL_PRINTED" } });
+              await prisma.acsTrackingSnapshot.updateMany({ where: { shop, voucherNo: String(number), trackingDetailsPurgedAt:null }, data: { lastShopifyEventStatus: "LABEL_PRINTED" } });
             }
             result.snapshots++;
             packageStatus = oldSnapshot?.status && !["SYNC_ERROR", "LABEL_CREATED"].includes(oldSnapshot.status) ? oldSnapshot.status : "LABEL_CREATED";
@@ -333,8 +352,11 @@ export async function runAcsTrackingSync(admin, shop, selectedOrderIds = null) {
           const checkpoints = [...details].sort((a, b) => String(a.checkpoint_date_time).localeCompare(String(b.checkpoint_date_time)));
           const lastCheckpoint = [...checkpoints].reverse().find((item) => !/SMS|MESSAG|ΕΙΔΟΠΟΙΗΣ|ΕΚΤΥΠΩΣ|ΕΤΙΚΕΤ|VOUCHER|LABEL/i.test(item.checkpoint_action || ""));
           const classified = classifyAcsShipment(summary, lastCheckpoint?.checkpoint_action || "");
+          const completionEvent=classified.status==="RETURNED" ? eventTime(lastCheckpoint?.checkpoint_date_time) : eventTime(summary.delivery_date) || eventTime(lastCheckpoint?.checkpoint_date_time);
           const snapshot = {
             ...orderIdentity(order),
+            completedAt:["DELIVERED","RETURNED"].includes(classified.status)
+              ? (oldSnapshot?.status===classified.status && oldSnapshot.completedAt || confirmedCompletionDate(completionEvent)) : null,
             shop,
             orderId: order.id,
             orderName: order.name,
@@ -357,7 +379,7 @@ export async function runAcsTrackingSync(admin, shop, selectedOrderIds = null) {
             lastCheckedAt: new Date(),
             error: null,
           };
-          await prisma.acsTrackingSnapshot.upsert({
+          await storeAcsSnapshot({
             where: { shop_voucherNo: { shop, voucherNo: String(number) } },
             create: snapshot,
             update: {
@@ -398,7 +420,7 @@ export async function runAcsTrackingSync(admin, shop, selectedOrderIds = null) {
             await createShopifyEvent(admin, fulfillment.id, status, happenedAt, `ACS ${number}: ${detailMessage || classified.label}`, checkpoint.checkpoint_location);
             result.created++;
             lastSentStatus = status;
-            await prisma.acsTrackingSnapshot.update({ where, data: { lastShopifyEventStatus: status } });
+            await prisma.acsTrackingSnapshot.updateMany({ where:{...where.shop_voucherNo,trackingDetailsPurgedAt:null}, data: { lastShopifyEventStatus: status } });
           }
           // On the first sync after installing this version, do not replay the
           // full ACS checkpoint history. The saved state or latest old Shopify
@@ -419,8 +441,8 @@ export async function runAcsTrackingSync(admin, shop, selectedOrderIds = null) {
           // Persist the checkpoint cursor even when every new checkpoint mapped
           // to the state already sent. This prevents the next cron from replaying
           // those same scans while still allowing later state transitions.
-          await prisma.acsTrackingSnapshot.update({
-            where,
+          await prisma.acsTrackingSnapshot.updateMany({
+            where:{...where.shop_voucherNo,trackingDetailsPurgedAt:null},
             data: {
               ...(lastSentStatus ? { lastShopifyEventStatus: lastSentStatus } : {}),
               ...(latestCheckpointAt ? { lastShopifyCheckpointAt: new Date(latestCheckpointAt) } : {}),
@@ -433,7 +455,7 @@ export async function runAcsTrackingSync(admin, shop, selectedOrderIds = null) {
             const where = { shop_voucherNo: { shop, voucherNo: String(number) } };
             const oldSnapshot = await prisma.acsTrackingSnapshot.findUnique({ where });
             previousStatus = oldSnapshot?.status && oldSnapshot.status !== "SYNC_ERROR" ? oldSnapshot.status : null;
-            await prisma.acsTrackingSnapshot.upsert({
+            await storeAcsSnapshot({
               where,
               create: {
                 shop, orderId: order.id, orderName: order.name, orderCreatedAt: order.createdAt ? new Date(order.createdAt) : null, fulfillmentId: fulfillment.id,

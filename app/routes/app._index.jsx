@@ -189,6 +189,7 @@ export async function loader({ request }) {
             voucher: s.voucherNo,
             status: s.statusLabel,
             statusCode:s.status,checkpointStatus:s.lastShopifyEventStatus,
+            trackingDetailsPurgedAt:s.trackingDetailsPurgedAt,completedAt:s.completedAt,
             createdAt: s.lastCheckedAt,
           });
       }
