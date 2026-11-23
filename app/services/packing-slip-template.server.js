@@ -41,13 +41,16 @@ export function packingContext(order,shop,history=[],locale='el') {
   const pending=items.some(i=>i.unfulfilledQuantity>0);
   const selected=items.map(i=>({...i,shipping_quantity:pending?i.unfulfilledQuantity:(order.fulfilledQuantities?.[i.id]??i.currentQuantity)})).filter(i=>i.shipping_quantity>0);
   if(!selected.length) throw new Error(`${order.name}: no shipment items are available for a packing slip.`);
+  // Shopify's total order count can exceed the history visible to the app.
+  // Keep that count for the greeting, but never count this order as past history.
+  const previousOrders=history.filter(previous=>previous.name!==order.name && previous.lineItems?.nodes?.some(item=>item.title)).slice(0,3);
   const ctx={
     shop:{name:shop.name,email:shop.email,domain:shop.primaryDomain.host},
     shop_address:{summary:[shop.shopAddress?.address1,shop.shopAddress?.address2,shop.shopAddress?.zip,shop.shopAddress?.city,new Intl.DisplayNames([locale],{type:'region'}).of(shop.shopAddress?.countryCodeV2||'GR')].filter(Boolean).join(', ')},
     shipping_address:address(order.shippingAddress,locale),billing_address:address(order.billingAddress,locale),
     order:{name:order.name,po_number:order.poNumber,created_at:order.createdAt,tags:order.tags.join(', '),note:order.note,
       financial_status:order.displayFinancialStatus.toLowerCase(),financial_status_label:order.displayFinancialStatus==='PAID'?'Paid':order.displayFinancialStatus,
-      customer:order.customer?{orders_count:Number(order.customer.numberOfOrders),orders:history.map(o=>({name:o.name,line_items:o.lineItems.nodes.map(i=>({title:i.title}))}))}:null},
+      customer:order.customer?{orders_count:Number(order.customer.numberOfOrders),orders:previousOrders.map(o=>({name:o.name,line_items:o.lineItems.nodes.map(i=>({title:i.title}))}))}:null},
     line_items_in_shipment:selected.map(i=>({title:i.title,variant_title:i.variantTitle==='Default Title'?'':i.variantTitle,sku:i.sku,quantity:i.quantity,shipping_quantity:i.shipping_quantity,
       image:i.image?{url:i.image.url}:null,properties:Object.fromEntries(i.customAttributes.map(a=>[a.key,a.value])),groups:i.lineItemGroup?[{title:i.lineItemGroup.title}]:[]})),
     includes_all_line_items_in_order:items.every(i=>selected.some(s=>s.id===i.id&&s.shipping_quantity>=i.currentQuantity)),
@@ -79,5 +82,11 @@ export async function packingHtml(template,context) {
     return url.toString();
   });
   engine.registerFilter('img_tag',(src,alt='',className='')=>src?`<img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" class="${escapeHtml(className)}">`:'');
-  return engine.parseAndRender(template.body,context);
+  // Apply the same empty-history guard when using the original template fetched
+  // live from Shopify. The store's saved template itself is left untouched.
+  const body=template.body.replace(
+    /({%-?\s*if\s+order\.customer\s+and\s+order\.customer\.orders_count\s*>\s*1)(\s*-?%}\s*<div\s+class=["']last-orders-box["'])/g,
+    '$1 and order.customer.orders.size > 0$2',
+  );
+  return engine.parseAndRender(body,context);
 }

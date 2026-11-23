@@ -130,7 +130,7 @@
   <div class="header">
     <div class="shop-title">
       <img src="https://cdn.shopify.com/s/files/1/0900/8234/5308/files/new-logo-mine-1.jpg?v=1749035599" 
-           alt="{{ shop.name }}" 
+           alt="{{ shop.name }}" width="160" height="80"
            style="width:160px;height:auto;display:block;margin-bottom:0.5em;">
     </div>
     <div class="order-title">
@@ -294,7 +294,7 @@
     {% endfor %}
   </div>
 
-  {% if order.customer and order.customer.orders_count > 1 %}
+  {% if order.customer and order.customer.orders_count > 1 and order.customer.orders.size > 0 %}
     <div class="last-orders-box">
       <div class="last-orders-title">Last orders, if any</div>
 
@@ -367,11 +367,11 @@
       </p>
       <div class="social-qrs">
         <div class="qr-item">
-          <img src="https://cdn.shopify.com/s/files/1/0900/8234/5308/files/instagram_qr.png?v=1756550396" alt="Instagram QR" style="width:120px;height:auto;">
+          <img src="https://cdn.shopify.com/s/files/1/0900/8234/5308/files/instagram_qr.png?v=1756550396" alt="Instagram QR" width="120" height="120" style="width:120px;height:auto;">
           <div>Instagram</div>
         </div>
         <div class="qr-item">
-          <img src="https://cdn.shopify.com/s/files/1/0900/8234/5308/files/tiktok_qr.png?v=1756550396" alt="TikTok QR" style="width:120px;height:auto;">
+          <img src="https://cdn.shopify.com/s/files/1/0900/8234/5308/files/tiktok_qr.png?v=1756550396" alt="TikTok QR" width="120" height="120" style="width:120px;height:auto;">
           <div>TikTok</div>
         </div>
       </div>

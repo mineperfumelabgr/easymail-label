@@ -36,6 +36,29 @@ test('Cyprus and Bulgaria use native template translations; customer history is 
  const html=await packingHtml(template,packingContext(o,shop,history));assert.match(html,/Поръчка/);assert.match(html,/#EARLIER/);assert.match(html,/Earlier perfume/);assert.match(html,/>COD</);
  o.shippingAddress.countryCodeV2='CY';assert.match(await packingHtml(template,packingContext(o,shop)),/Παραγγελία/);
 });
+test('A second-order greeting remains accurate when old purchases are outside the app history window',async()=>{
+ const o=order({customer:{numberOfOrders:'2'}});
+ const context=packingContext(o,shop,[o]);
+ assert.equal(context.order.customer.orders_count,2);
+ assert.deepEqual(context.order.customer.orders,[]);
+ const legacy={...template,body:template.body.replace(' and order.customer.orders.size > 0','')};
+ for(const source of [template,legacy]){
+  const html=await packingHtml(source,context);
+  assert.match(html,/2nd παραγγελία/);
+  assert.doesNotMatch(html,/last-orders-box">|Last orders, if any/);
+ }
+});
+test('Packing slips show products from up to three actual previous orders, including older purchases',async()=>{
+ const o=order({customer:{numberOfOrders:'6'}});
+ const history=[o,...Array.from({length:4},(_,i)=>({name:'#PAST-'+i,createdAt:'2025-01-01',lineItems:{nodes:[{title:'Past perfume '+i}]}}))];
+ const context=packingContext(o,shop,history);
+ assert.equal(context.order.customer.orders_count,6);
+ assert.deepEqual(context.order.customer.orders.map(previous=>previous.name),['#PAST-0','#PAST-1','#PAST-2']);
+ const html=await packingHtml(template,context);
+ assert.match(html,/Last orders, if any/);
+ for(let i=0;i<3;i++)assert.match(html,new RegExp('Past perfume '+i));
+ assert.doesNotMatch(html,/Past perfume 3/);
+});
 test('Live Shopify template wins; access denial uses owner snapshot and other errors remain visible',async()=>{
  let calls=0;
  const live=await packingTemplate({},'custom.myshopify.com',async()=>{calls++;return {data:{translatableResources:{nodes:[{resourceId:'gid://shopify/PackingSlipTemplate/1',translatableContent:[{key:'body',value:'CUSTOM',locale:'en'}]}],pageInfo:{hasNextPage:false}}}};});
