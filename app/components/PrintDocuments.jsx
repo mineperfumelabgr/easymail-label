@@ -83,6 +83,9 @@ export function PrintDocuments({result}){
   if(!documents.length)return null;
   return <section ref={panel} className="print-documents" aria-label="Print documents">
     <h3>{active?.name} · Print preview</h3>
+    {result.packingWarnings?.length > 0 && <ul role="status">
+      {result.packingWarnings.map(warning => <li key={warning}>{warning}</li>)}
+    </ul>}
     <div className="controls">{documents.map(doc=><span key={doc.url}>
       <button type="button" onClick={()=>active===doc?print():setActive(doc)}>Print {doc.name}</button>
       <a href={doc.url} target="_blank" rel="noreferrer">Open {doc.name} PDF</a>{" "}

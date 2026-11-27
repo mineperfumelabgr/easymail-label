@@ -55,9 +55,11 @@ export async function packingPdf(admin, ids) {
       }
       history=historyCache.get(order.customer.id);
     }
-    documents.push(await packingHtml(template,packingContext(order,shop,history,template.locale)));
+    const html = await packingHtml(template,packingContext(order,shop,history,template.locale));
+    documents.push({orderName: order.name, html});
   }
-  return (await renderPackingPdfs(documents)).toString('base64');
+  const {bytes, warnings} = await renderPackingPdfs(documents);
+  return {packing: bytes.toString('base64'), packingWarnings: warnings};
 }
 
 export function renderPdf(script,payload){

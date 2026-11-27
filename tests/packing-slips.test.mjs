@@ -71,7 +71,11 @@ test('A merged print PDF preserves separate orders, multilingual text and long-o
  const first=order(),second=order({name:'#TEST-BG'});second.shippingAddress.countryCodeV2='BG';
  second.lineItems.nodes=Array.from({length:20},(_,i)=>({...first.lineItems.nodes[0],id:'item'+i,title:'BULGARIA ITEM '+i,quantity:1,currentQuantity:1,unfulfilledQuantity:1}));
  const htmls=await Promise.all([first,second].map(o=>packingHtml(template,packingContext(o,shop))));
- const bytes=await renderPackingPdfs(htmls),doc=await PDFDocument.load(bytes);assert.ok(doc.getPageCount()>=3);
+ // A broken image in the second order must not prevent printing either order.
+ htmls[1]+='<div class="flex-line-item"><img src="data:image/png;base64,AAAA"><span class="line-item-description-line">Test perfume</span></div>';
+ const {bytes,warnings}=await renderPackingPdfs([first,second].map((o,i)=>({orderName:o.name,html:htmls[i]})));
+ assert.ok(warnings.some(warning=>warning.startsWith('#TEST-BG · Product photo (Test perfume)')));
+ const doc=await PDFDocument.load(bytes);assert.ok(doc.getPageCount()>=3);
  const dir=await mkdtemp(join(tmpdir(),'courier-packing-'));
  try{
   const file=join(dir,'batch.pdf');await writeFile(file,bytes);

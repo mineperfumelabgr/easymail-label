@@ -68,17 +68,31 @@ async function render(documents) {
     const merged=await PDFDocument.create();
     const fonts=await fontCss();
     const emojiImages=JSON.parse(await readFile(path.resolve('app/templates/packing-emoji.json'),'utf8'));
-    for(const document of documents){
-      const html=document.replace(/❤️|🎁/gu,emoji=>`<img alt="${emoji}" src="${emojiImages[emoji.replace('️','')]}" style="height:1em;width:1em;vertical-align:-0.15em">`);
+    const warnings = [];
+    for(const {orderName, html: source} of documents){
+      const html=source.replace(/❤️|🎁/gu,emoji=>`<img alt="${emoji}" src="${emojiImages[emoji.replace('️','')]}" style="height:1em;width:1em;vertical-align:-0.15em">`);
       await page.setContent(`<!doctype html><html><head><meta charset="utf-8"><style>${fonts}\n@page{size:A4}html,body{margin:0;padding:0}body{font-family:"Noto Sans","Noto Color Emoji",sans-serif}.wrapper{font-family:"Noto Sans","Noto Color Emoji",sans-serif!important}</style></head><body>${html}</body></html>`,{waitUntil:'load',timeout:45000});
       // Fonts and images must be ready before the PDF is generated.
       await page.evaluate(async()=>{await document.fonts.ready;});
-      const missing=await page.evaluate(()=>[...document.images].some(i=>!i.complete||i.naturalWidth===0));
-      if(missing)throw new Error('A packing slip image could not be loaded. Please retry printing.');
+      // A missing image must not block packing slips or voucher preparation.
+      const unavailableImages = await page.evaluate(() => {
+        const unavailable = [];
+        for (const image of document.images) {
+          if (image.complete && image.naturalWidth > 0) continue;
+          image.style.visibility = 'hidden';
+          const product = image.closest('.flex-line-item')
+            ?.querySelector('.line-item-description-line')?.textContent.trim();
+          unavailable.push(product ? `Product photo (${product})` : image.alt.trim() || 'Packing slip image');
+        }
+        return [...new Set(unavailable)];
+      });
+      for (const image of unavailableImages) {
+        warnings.push(`${orderName} · ${image} could not be loaded and was omitted from the packing slip.`);
+      }
       const pdf=await PDFDocument.load(await page.pdf({format:'A4',printBackground:true,scale:0.81,margin:{top:'26pt',right:0,bottom:'26pt',left:0},timeout:45000}));
       const pages=await merged.copyPages(pdf,pdf.getPageIndices());
       pages.forEach(p=>merged.addPage(p));
     }
-    return Buffer.from(await merged.save());
+    return {bytes: Buffer.from(await merged.save()), warnings};
   }finally{await browser.close();}
 }

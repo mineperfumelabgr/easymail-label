@@ -324,15 +324,15 @@ export async function action({ request }) {
     return pdf.getPageCount()?Buffer.from(await pdf.save()).toString("base64"):null;
   }
   if(intent==="packing") {
-    try{return {packing:await packingPdf(admin,ids),messages}}catch(error){return {messages:[error.message]}}
+    try{return {...await packingPdf(admin,ids),messages}}catch(error){return {messages:[error.message]}}
   }
   if (intent === "issue" || intent==="both") {
     const employee=await db.employee.findFirst({where:{shop,id:String(f.get("employee")||"")},select:{name:true}});
     const {data:selection}=await adminGraphql(admin,`query($ids:[ID!]!){nodes(ids:$ids){... on Order{id name sourceName test displayFulfillmentStatus acs:metafield(namespace:"acs",key:"voucher_number"){value}}}}`,{ids});
     const selected=new Map(selection.nodes.filter(Boolean).map(order=>[order.id,order]));
     if (!employee && ids.some(id=>selected.get(id)?.displayFulfillmentStatus!=="FULFILLED")) return {fieldErrors:{employee:"Select the employee in Prepared by before preparing new shipments."},messages:[]};
-    let packing=null;
-    if(intent==="both"){try{packing=await packingPdf(admin,ids)}catch(error){return {messages:["Packing slips: "+error.message]}}}
+    let packingDocuments={};
+    if(intent==="both"){try{packingDocuments=await packingPdf(admin,ids)}catch(error){return {messages:["Packing slips: "+error.message]}}}
     const issued=[];
     const issuedRows=[];
     for (const id of ids) {
@@ -373,7 +373,7 @@ export async function action({ request }) {
         if(["ACS","Geniki"].includes(courier))try{await labelErrorTag(admin,id,courier,true)}catch(err){messages.push(name+" · Could not apply error tag: "+err.message)}
       }
     }
-    return { messages, issued, packing, pdf:await labelsPdf(issuedRows) };
+    return { messages, issued, ...packingDocuments, pdf:await labelsPdf(issuedRows) };
   }
   const rows = await db.courierShipment.findMany({
     where: { shop, id: { in: ids } },
